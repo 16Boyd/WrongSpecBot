@@ -2,7 +2,7 @@
   "version": 2,
   "buildCommand": null,
   "outputDirectory": null,
-  "installCommand": "corepack enable && pnpm install",
+  "installCommand": "npm install",
   "functions": {
     "api/**/*.ts": {
       "maxDuration": 300
