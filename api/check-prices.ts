@@ -25,7 +25,7 @@ interface ApiResponse {
 export default async function handler(
     req: VercelRequest,
     res: VercelResponse
-): Promise<VercelResponse<ApiResponse>> {
+): Promise<void> {
     const logger = new Logger('check-prices-api');
     
     try {
@@ -36,17 +36,23 @@ export default async function handler(
             userAgent: req.headers['user-agent']
         });
         
-        //Check for UptimeRobot by examining the user-agent
+        // Check authorization: UptimeRobot user-agent OR Bearer token
         const userAgent = req.headers['user-agent'] || '';
+        const authHeader = req.headers['authorization'] || '';
         const isUptimeRobot = userAgent.includes('UptimeRobot');
+        const isCloudflare = userAgent.includes('Cloudflare-Cron-Worker');
+        const hasValidToken = authHeader === `Bearer ${process.env.CRON_SECRET}`;
         
         logger.info('Authorization check', { 
             userAgent,
-            isUptimeRobot 
+            isUptimeRobot,
+            isCloudflare,
+            hasAuthHeader: !!authHeader
         });
         
-        if (!isUptimeRobot) {
-            logger.warn('Request not from UptimeRobot, returning unauthorized');
+        // Allow UptimeRobot OR valid Bearer token (from Cloudflare)
+        if (!isUptimeRobot && !hasValidToken) {
+            logger.warn('Request unauthorized - not UptimeRobot and no valid token');
             await logger.flush();
             return res.status(401).json({ 
                 message: 'Unauthorized',
@@ -54,12 +60,14 @@ export default async function handler(
             });
         }
 
-        logger.info('Request authorized, starting price check...');
+        logger.info('Request authorized, starting price check...', {
+            authMethod: isUptimeRobot ? 'UptimeRobot' : 'Bearer Token'
+        });
         
         // Process synchronously to ensure logs are written
         try {
             const result = await checkPrices();
-            logger.info('Price check completed successfully', result);
+            logger.info('Price check completed successfully', result as unknown as Record<string, unknown>);
             logger.info('VERCEL CHECK-PRICES FUNCTION COMPLETED');
             await logger.flush();
             

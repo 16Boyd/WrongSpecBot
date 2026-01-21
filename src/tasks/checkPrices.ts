@@ -456,7 +456,7 @@ async function checkPrices(): Promise<CheckPricesResult> {
                     if (price > settings.sellThreshold) {
                         status = 'SELL ZONE';
                     } else if (price < settings.holdThreshold) {
-                        status = 'BUY ZONE';
+                        status = 'HOLD ZONE';
                     }
                     
                     message = `📊 **Token Price Update**\nRegion: ${region}\nCurrent Price: ${price.toLocaleString()} gold\nStatus: **${status}**\nSell Threshold: ${settings.sellThreshold.toLocaleString()} gold\nHold Threshold: ${settings.holdThreshold.toLocaleString()} gold\n\n*Last updated: ${new Date().toLocaleString()}*`;
