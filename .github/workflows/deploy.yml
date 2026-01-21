@@ -1,4 +1,4 @@
-name: Deploy All
+name: Deploy
 
 on:
   push:
@@ -6,8 +6,29 @@ on:
       - main
 
 jobs:
+  # Detect which files changed
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      discord: ${{ steps.filter.outputs.discord }}
+      cloudflare: ${{ steps.filter.outputs.cloudflare }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            discord:
+              - 'src/commands/**'
+              - 'src/deploy-commands.ts'
+            cloudflare:
+              - 'cloudflare-cron/**'
+
   deploy-discord-commands:
     name: Deploy Discord Commands
+    needs: changes
+    if: needs.changes.outputs.discord == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,6 +57,8 @@ jobs:
 
   deploy-cloudflare:
     name: Deploy Cloudflare Worker
+    needs: changes
+    if: needs.changes.outputs.cloudflare == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
