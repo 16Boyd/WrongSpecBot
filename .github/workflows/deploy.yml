@@ -32,8 +32,7 @@ jobs:
         run: pnpm run deploy:discord:only
         env:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
-          DISCORD_CLIENT_ID: ${{ secrets.DISCORD_CLIENT_ID }}
-          DISCORD_GUILD_ID: ${{ secrets.DISCORD_GUILD_ID }}
+          CLIENT_ID: ${{ secrets.CLIENT_ID }}
 
   deploy-cloudflare:
     name: Deploy Cloudflare Worker
