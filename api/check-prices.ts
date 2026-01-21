@@ -25,7 +25,7 @@ interface ApiResponse {
 export default async function handler(
     req: VercelRequest,
     res: VercelResponse
-): Promise<VercelResponse<ApiResponse>> {
+): Promise<void> {
     const logger = new Logger('check-prices-api');
     
     try {
@@ -59,7 +59,7 @@ export default async function handler(
         // Process synchronously to ensure logs are written
         try {
             const result = await checkPrices();
-            logger.info('Price check completed successfully', result);
+            logger.info('Price check completed successfully', result as unknown as Record<string, unknown>);
             logger.info('VERCEL CHECK-PRICES FUNCTION COMPLETED');
             await logger.flush();
             
