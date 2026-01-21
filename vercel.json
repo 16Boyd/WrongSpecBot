@@ -3,6 +3,7 @@
   "buildCommand": null,
   "outputDirectory": null,
   "installCommand": "npm install",
+  "ignoreCommand": "git diff HEAD^ HEAD --quiet -- api/ src/ package.json vercel.json",
   "functions": {
     "api/**/*.ts": {
       "maxDuration": 300
