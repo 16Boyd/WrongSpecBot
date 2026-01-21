@@ -48,10 +48,11 @@ export default async function handler(
         if (!isUptimeRobot) {
             logger.warn('Request not from UptimeRobot, returning unauthorized');
             await logger.flush();
-            return res.status(401).json({ 
+            res.status(401).json({ 
                 message: 'Unauthorized',
                 timestamp: new Date().toISOString()
             });
+            return;
         }
 
         logger.info('Request authorized, starting price check...');
@@ -63,12 +64,13 @@ export default async function handler(
             logger.info('VERCEL CHECK-PRICES FUNCTION COMPLETED');
             await logger.flush();
             
-            return res.status(200).json({ 
+            res.status(200).json({ 
                 status: 'completed',
                 message: 'Price check completed successfully',
                 result,
                 timestamp: new Date().toISOString()
             });
+            return;
         } catch (priceCheckError) {
             const error = priceCheckError as Error;
             logger.error('Error in price check', {
@@ -77,12 +79,13 @@ export default async function handler(
             });
             await logger.flush();
             
-            return res.status(500).json({ 
+            res.status(500).json({ 
                 status: 'error',
                 message: 'Price check failed',
                 error: error.message,
                 timestamp: new Date().toISOString()
             });
+            return;
         }
         
     } catch (error) {
@@ -94,7 +97,7 @@ export default async function handler(
         logger.error('VERCEL CHECK-PRICES FUNCTION ERROR');
         await logger.flush();
         
-        return res.status(500).json({ 
+        res.status(500).json({ 
             message: 'Internal server error',
             error: err.message,
             timestamp: new Date().toISOString()
