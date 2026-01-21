@@ -14,6 +14,10 @@
       "dest": "/api/check-prices.ts"
     },
     {
+      "src": "/api/server-status",
+      "dest": "/api/server-status.ts"
+    },
+    {
       "src": "/api/interactions",
       "dest": "/api/interactions.ts"
     },
