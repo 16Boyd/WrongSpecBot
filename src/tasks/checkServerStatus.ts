@@ -125,14 +125,14 @@ async function sendDiscordNotification(
     isOnline: boolean,
     settings: ServerStatusSettings,
     logger: Logger
-): Promise<void> {
+): Promise<boolean> {
     if (!settings.channel_id) {
         logger.warn('No channel configured for server status notifications');
-        return;
+        return false;
     }
     
-    if (isOnline && !settings.notify_on_online) return;
-    if (!isOnline && !settings.notify_on_offline) return;
+    if (isOnline && !settings.notify_on_online) return true; // Skip but consider success
+    if (!isOnline && !settings.notify_on_offline) return true; // Skip but consider success
     
     const client = new Client({ intents: [GatewayIntentBits.Guilds] });
     
@@ -142,7 +142,7 @@ async function sendDiscordNotification(
         const channel = await client.channels.fetch(settings.channel_id);
         if (!channel || !(channel instanceof TextChannel)) {
             logger.error('Invalid channel for server status notifications');
-            return;
+            return false;
         }
         
         const emoji = isOnline ? '🟢' : '🔴';
@@ -162,8 +162,10 @@ async function sendDiscordNotification(
         });
         
         logger.info(`Sent Discord notification for ${realmName} status change`);
+        return true;
     } catch (error) {
         logger.error('Failed to send Discord notification', errorToLogMetadata(error));
+        return false;
     } finally {
         await client.destroy();
     }
@@ -203,26 +205,33 @@ export async function checkServerStatus(): Promise<CheckServerStatusResult> {
         const previousOnline = settings.watched_realm_online ?? true;
         const statusChanged = isOnline !== previousOnline;
         
-        // Update status in database
+        // Send notification first, only update database if successful
         if (statusChanged) {
-            await supabase
-                .from('server_status_settings')
-                .update({ 
-                    watched_realm_online: isOnline,
-                    updated_at: new Date().toISOString()
-                })
-                .eq('id', 'default');
-            
             logger.info(`Realm ${settings.watched_realm} status changed: ${previousOnline} -> ${isOnline}`);
             
-            // Send notification
-            await sendDiscordNotification(
+            // Send notification first
+            const notificationSent = await sendDiscordNotification(
                 settings.watched_realm,
                 settings.watched_realm_region,
                 isOnline,
                 settings,
                 logger
             );
+            
+            // Only update database if notification succeeded
+            if (notificationSent) {
+                await supabase
+                    .from('server_status_settings')
+                    .update({ 
+                        watched_realm_online: isOnline,
+                        updated_at: new Date().toISOString()
+                    })
+                    .eq('id', 'default');
+                
+                logger.info('Database updated after successful notification');
+            } else {
+                logger.warn('Skipping database update - notification failed, will retry next check');
+            }
         }
         
         await logger.flush();
