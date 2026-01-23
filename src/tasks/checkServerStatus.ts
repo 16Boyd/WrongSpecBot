@@ -58,40 +58,48 @@ async function checkRealmStatus(
         const regionLower = region.toLowerCase();
         const baseUrl = `https://${regionLower}.api.blizzard.com`;
         
-        // Search for the realm
-        const searchResponse = await axios.get(`${baseUrl}/data/wow/search/realm`, {
+        // Convert realm name to slug (lowercase, spaces to hyphens)
+        const realmSlug = realmName.toLowerCase().replace(/\s+/g, '-').replace(/'/g, '');
+        
+        logger.info(`Checking realm status for ${realmName} (slug: ${realmSlug})`);
+        
+        // Get the realm directly by slug
+        const realmResponse = await axios.get(`${baseUrl}/data/wow/realm/${realmSlug}`, {
             params: {
                 namespace: `dynamic-${regionLower}`,
-                'name.en_US': realmName,
-                _pageSize: 1
+                locale: 'en_US'
             },
             headers: { Authorization: `Bearer ${accessToken}` },
             timeout: 15000
         });
         
-        if (!searchResponse.data.results || searchResponse.data.results.length === 0) {
-            logger.warn(`Realm "${realmName}" not found in ${region}`);
+        // Extract connected realm ID from the href
+        const connectedRealmHref = realmResponse.data.connected_realm?.href;
+        if (!connectedRealmHref) {
+            logger.warn(`No connected realm found for ${realmName}`);
             return false;
         }
         
-        const connectedRealmId = searchResponse.data.results[0].data.connected_realm.id;
-        
         // Get connected realm status
-        const realmResponse = await axios.get(
-            `${baseUrl}/data/wow/connected-realm/${connectedRealmId}`,
-            {
-                params: { namespace: `dynamic-${regionLower}`, locale: 'en_US' },
-                headers: { Authorization: `Bearer ${accessToken}` },
-                timeout: 15000
-            }
-        );
+        const connectedRealmResponse = await axios.get(connectedRealmHref, {
+            params: {
+                namespace: `dynamic-${regionLower}`,
+                locale: 'en_US'
+            },
+            headers: { Authorization: `Bearer ${accessToken}` },
+            timeout: 15000
+        });
         
-        const status = realmResponse.data.status?.type;
+        const status = connectedRealmResponse.data.status?.type;
         logger.info(`Realm ${realmName} (${region}) status: ${status}`);
         
         return status === 'UP';
     } catch (error) {
-        logger.warn(`Realm ${realmName} check failed`, errorToLogMetadata(error));
+        if (axios.isAxiosError(error) && error.response?.status === 404) {
+            logger.warn(`Realm "${realmName}" not found in ${region}`);
+        } else {
+            logger.warn(`Realm ${realmName} check failed`, errorToLogMetadata(error));
+        }
         return false;
     }
 }
