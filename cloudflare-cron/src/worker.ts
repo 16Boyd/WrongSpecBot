@@ -5,7 +5,7 @@ export interface Env {
   VERCEL_BASE_URL: string;
 }
 
-const ENDPOINTS = ['/api/check-prices'];
+const ENDPOINTS = ['/api/check-prices', '/api/server-status'];
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
