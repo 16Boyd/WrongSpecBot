@@ -7,9 +7,13 @@ CREATE TABLE IF NOT EXISTS server_status_settings (
     watched_realm TEXT,
     watched_realm_region TEXT DEFAULT 'US',
     watched_realm_online BOOLEAN DEFAULT true,
+    last_message_id TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Migration: Add last_message_id column if it doesn't exist
+ALTER TABLE server_status_settings ADD COLUMN IF NOT EXISTS last_message_id TEXT;
 
 -- Enable Row Level Security
 ALTER TABLE server_status_settings ENABLE ROW LEVEL SECURITY;

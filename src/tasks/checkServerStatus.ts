@@ -17,6 +17,7 @@ interface ServerStatusSettings {
     watched_realm: string | null;
     watched_realm_region: string | null;
     watched_realm_online: boolean | null;
+    last_message_id: string | null;
 }
 
 export interface CheckServerStatusResult {
@@ -125,14 +126,14 @@ async function sendDiscordNotification(
     isOnline: boolean,
     settings: ServerStatusSettings,
     logger: Logger
-): Promise<boolean> {
+): Promise<string | null> {
     if (!settings.channel_id) {
         logger.warn('No channel configured for server status notifications');
-        return false;
+        return null;
     }
     
-    if (isOnline && !settings.notify_on_online) return true; // Skip but consider success
-    if (!isOnline && !settings.notify_on_offline) return true; // Skip but consider success
+    if (isOnline && !settings.notify_on_online) return 'skipped'; // Skip but consider success
+    if (!isOnline && !settings.notify_on_offline) return 'skipped'; // Skip but consider success
     
     const client = new Client({ intents: [GatewayIntentBits.Guilds] });
     
@@ -142,14 +143,26 @@ async function sendDiscordNotification(
         const channel = await client.channels.fetch(settings.channel_id);
         if (!channel || !(channel instanceof TextChannel)) {
             logger.error('Invalid channel for server status notifications');
-            return false;
+            return null;
+        }
+        
+        // Delete the previous message if it exists
+        if (settings.last_message_id) {
+            try {
+                const oldMessage = await channel.messages.fetch(settings.last_message_id);
+                await oldMessage.delete();
+                logger.info(`Deleted previous status message: ${settings.last_message_id}`);
+            } catch (error) {
+                // Message may already be deleted or not found, that's okay
+                logger.warn('Could not delete previous message', errorToLogMetadata(error));
+            }
         }
         
         const emoji = isOnline ? '🟢' : '🔴';
         const status = isOnline ? 'ONLINE' : 'OFFLINE';
         const color = isOnline ? 0x00ff00 : 0xff0000;
         
-        await channel.send({
+        const message = await channel.send({
             embeds: [{
                 title: `${emoji} ${realmName} is ${status}`,
                 description: isOnline 
@@ -161,11 +174,11 @@ async function sendDiscordNotification(
             }]
         });
         
-        logger.info(`Sent Discord notification for ${realmName} status change`);
-        return true;
+        logger.info(`Sent Discord notification for ${realmName} status change, message ID: ${message.id}`);
+        return message.id;
     } catch (error) {
         logger.error('Failed to send Discord notification', errorToLogMetadata(error));
-        return false;
+        return null;
     } finally {
         await client.destroy();
     }
@@ -210,7 +223,7 @@ export async function checkServerStatus(): Promise<CheckServerStatusResult> {
             logger.info(`Realm ${settings.watched_realm} status changed: ${previousOnline} -> ${isOnline}`);
             
             // Send notification first
-            const notificationSent = await sendDiscordNotification(
+            const newMessageId = await sendDiscordNotification(
                 settings.watched_realm,
                 settings.watched_realm_region,
                 isOnline,
@@ -219,13 +232,20 @@ export async function checkServerStatus(): Promise<CheckServerStatusResult> {
             );
             
             // Only update database if notification succeeded
-            if (notificationSent) {
+            if (newMessageId) {
+                const updateData: Record<string, unknown> = { 
+                    watched_realm_online: isOnline,
+                    updated_at: new Date().toISOString()
+                };
+                
+                // Only save message ID if it's not 'skipped' (actual message was sent)
+                if (newMessageId !== 'skipped') {
+                    updateData.last_message_id = newMessageId;
+                }
+                
                 await supabase
                     .from('server_status_settings')
-                    .update({ 
-                        watched_realm_online: isOnline,
-                        updated_at: new Date().toISOString()
-                    })
+                    .update(updateData)
                     .eq('id', 'default');
                 
                 logger.info('Database updated after successful notification');
