@@ -18,6 +18,7 @@ interface ServerStatusSettings {
     watched_realm_region: string | null;
     watched_realm_online: boolean | null;
     last_message_id: string | null;
+    offline_check_count: number;
 }
 
 export interface CheckServerStatusResult {
@@ -216,10 +217,40 @@ export async function checkServerStatus(): Promise<CheckServerStatusResult> {
         );
         
         const previousOnline = settings.watched_realm_online ?? true;
-        const statusChanged = isOnline !== previousOnline;
+        const offlineCheckCount = settings.offline_check_count ?? 0;
+        const REQUIRED_OFFLINE_CHECKS = 2; // Require 2 consecutive offline checks before notifying
         
-        // Send notification first, only update database if successful
-        if (statusChanged) {
+        let statusChanged = false;
+        let shouldNotify = false;
+        let newOfflineCount = offlineCheckCount;
+        
+        if (isOnline) {
+            // Server is online
+            if (!previousOnline) {
+                // Was offline, now online - notify
+                statusChanged = true;
+                shouldNotify = true;
+                logger.info(`Realm ${settings.watched_realm} is back ONLINE`);
+            } else if (offlineCheckCount > 0) {
+                // Was accumulating offline checks but recovered before threshold
+                logger.info(`Realm ${settings.watched_realm} recovered after ${offlineCheckCount} offline check(s)`);
+            }
+            newOfflineCount = 0; // Reset counter
+        } else {
+            // Server appears offline
+            newOfflineCount = offlineCheckCount + 1;
+            logger.info(`Realm ${settings.watched_realm} offline check ${newOfflineCount}/${REQUIRED_OFFLINE_CHECKS}`);
+            
+            if (previousOnline && newOfflineCount >= REQUIRED_OFFLINE_CHECKS) {
+                // Was online, now confirmed offline after multiple checks
+                statusChanged = true;
+                shouldNotify = true;
+                logger.info(`Realm ${settings.watched_realm} confirmed OFFLINE after ${newOfflineCount} consecutive checks`);
+            }
+        }
+        
+        // Send notification if needed
+        if (shouldNotify) {
             logger.info(`Realm ${settings.watched_realm} status changed: ${previousOnline} -> ${isOnline}`);
             
             // Send notification first
@@ -235,6 +266,7 @@ export async function checkServerStatus(): Promise<CheckServerStatusResult> {
             if (newMessageId) {
                 const updateData: Record<string, unknown> = { 
                     watched_realm_online: isOnline,
+                    offline_check_count: newOfflineCount,
                     updated_at: new Date().toISOString()
                 };
                 
@@ -252,6 +284,17 @@ export async function checkServerStatus(): Promise<CheckServerStatusResult> {
             } else {
                 logger.warn('Skipping database update - notification failed, will retry next check');
             }
+        } else if (newOfflineCount !== offlineCheckCount) {
+            // Update just the offline count (no notification needed)
+            await supabase
+                .from('server_status_settings')
+                .update({ 
+                    offline_check_count: newOfflineCount,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', 'default');
+            
+            logger.info(`Updated offline_check_count to ${newOfflineCount}`);
         }
         
         await logger.flush();
