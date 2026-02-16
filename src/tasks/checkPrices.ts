@@ -351,6 +351,57 @@ async function sendNotificationToChannel(channelId: string, message: string, log
     }
 }
 
+// Delete existing Discord message
+async function deleteDiscordMessage(channelId: string, messageId: string, logger: Logger): Promise<boolean> {
+    let client: Client | undefined;
+    try {
+        client = new Client({
+            intents: [
+                GatewayIntentBits.Guilds,
+                GatewayIntentBits.GuildMessages
+            ]
+        });
+
+        await client.login(process.env.DISCORD_TOKEN);
+
+        const channel = await client.channels.fetch(channelId);
+        if (channel instanceof BaseGuildTextChannel) {
+            const message = await channel.messages.fetch(messageId);
+            await message.delete();
+            logger.info(`Message ${messageId} deleted in channel ${channelId}`);
+            await client.destroy();
+            return true;
+        } else {
+            logger.error(`Channel ${channelId} not found or not text-based`);
+            await client.destroy();
+            return false;
+        }
+    } catch (error) {
+        if (error instanceof Error) {
+            logger.error('Error deleting message', {
+                messageId,
+                channelId,
+                message: error.message,
+                stack: error.stack
+            });
+        } else {
+            logger.error('Error deleting message', {
+                messageId,
+                channelId,
+                error
+            });
+        }
+        try {
+            if (client) {
+                await client.destroy();
+            }
+        } catch (destroyError) {
+            logger.error('Error destroying client', errorToLogMetadata(destroyError));
+        }
+        return false;
+    }
+}
+
 // Edit existing Discord message
 async function editDiscordMessage(channelId: string, messageId: string, newMessage: string, logger: Logger): Promise<boolean> {
     let client: Client | undefined;
@@ -434,33 +485,33 @@ async function checkPrices(): Promise<CheckPricesResult> {
                 let message = '';
                 let newAction = settings.lastAction;
                 
-                // Check if we should send a new message (threshold crossed)
+                // Only send a NEW message when token moves into SELL stage; all other updates edit the existing message
                 if (price >= settings.sellThreshold && settings.lastAction !== 'SELL') {
-                    // Price is above sell threshold and we haven't notified to sell yet
+                    // Price is above sell threshold - send new message (previous message will be deleted)
                     shouldSendNewMessage = true;
                     newAction = 'SELL';
                     message = `🚨 **Token Price Alert**\nRegion: ${region}\nCurrent Price: ${price.toLocaleString()} gold\nAction: **SELL** - Price is above threshold of ${settings.sellThreshold.toLocaleString()} gold\nWill notify again when price drops below ${settings.holdThreshold.toLocaleString()} gold`;
                     logger.info('Triggering SELL notification - sending new message');
-                } else if (price <= settings.holdThreshold && settings.lastAction !== 'BUY') {
-                    // Price is below hold threshold and we haven't notified to buy yet
-                    shouldSendNewMessage = true;
-                    newAction = 'BUY';
-                    message = `🚨 **Token Price Alert**\nRegion: ${region}\nCurrent Price: ${price.toLocaleString()} gold\nAction: **HOLD** - Price is below threshold of ${settings.holdThreshold.toLocaleString()} gold\nWill notify again when price exceeds ${settings.sellThreshold.toLocaleString()} gold`;
-                    logger.info('Triggering BUY notification - sending new message');
-                } else if (settings.messageId && settings.currentPrice !== price) {
-                    // Price has changed but no threshold crossed - update existing message
+                } else if (settings.messageId) {
+                    // All other updates: edit the existing message (hold zone, between thresholds, or price change)
                     shouldUpdateExistingMessage = true;
-                    
-                    // Determine current status based on price
-                    let status = 'MONITORING';
-                    if (price > settings.sellThreshold) {
-                        status = 'SELL ZONE';
-                    } else if (price < settings.holdThreshold) {
-                        status = 'BUY ZONE';
+                    if (price <= settings.holdThreshold) {
+                        newAction = 'BUY';
+                    } else if (price >= settings.sellThreshold) {
+                        newAction = 'SELL';
+                    } else {
+                        newAction = settings.lastAction;
                     }
-                    
+
+                    let status = 'MONITORING';
+                    if (price >= settings.sellThreshold) {
+                        status = 'SELL ZONE';
+                    } else if (price <= settings.holdThreshold) {
+                        status = 'HOLD ZONE';
+                    }
+
                     message = `📊 **Token Price Update**\nRegion: ${region}\nCurrent Price: ${price.toLocaleString()} gold\nStatus: **${status}**\nSell Threshold: ${settings.sellThreshold.toLocaleString()} gold\nHold Threshold: ${settings.holdThreshold.toLocaleString()} gold\n\n*Last updated: ${new Date().toLocaleString()}*`;
-                    logger.info('Price changed - updating existing message');
+                    logger.info('Updating existing message');
                 } else {
                     logger.info('No notification needed', {
                         reason: settings.messageId ? 
@@ -471,6 +522,11 @@ async function checkPrices(): Promise<CheckPricesResult> {
                 }
                 
                 if (shouldSendNewMessage) {
+                    // Delete the previous message before posting the new one (only when entering SELL stage)
+                    if (settings.messageId && typeof settings.messageId === 'string') {
+                        await deleteDiscordMessage(settings.channelId, settings.messageId, logger);
+                        logger.info('Deleted previous message before sending new SELL alert');
+                    }
                     logger.info('Sending new notification message...');
                     const messageId = await sendNotificationToChannel(settings.channelId, message, logger);
                     if (messageId) {
@@ -483,7 +539,7 @@ async function checkPrices(): Promise<CheckPricesResult> {
                     if (typeof messageId === 'string') {
                         const success = await editDiscordMessage(settings.channelId, messageId, message, logger);
                         if (success) {
-                            await updateNotificationState(undefined, messageId, price, logger);
+                            await updateNotificationState(newAction, messageId, price, logger);
                             logger.info('Existing message updated');
                         } else {
                             logger.warn('Failed to update existing message - it may have been deleted');
