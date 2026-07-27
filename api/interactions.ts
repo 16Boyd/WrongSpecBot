@@ -12,6 +12,8 @@ import axios from 'axios';
 import supabase from '../src/lib/supabase';
 import { getAccessToken, getTokenPriceInGold } from '../src/lib/blizzard';
 import { login as ampLogin, startInstance as ampStartInstance, startApplication as ampStartApplication } from '../src/lib/amp';
+import { editChannelMessage } from '../src/lib/discord';
+import { buildAmpMessage, ampMessageSignature, DEFAULT_TEMPLATE, AMP_COLORS } from '../src/lib/ampMessage';
 
 // Discord signs interactions over the exact raw request bytes. Disable Vercel's body
 // parser so we can verify the signature against those bytes instead of a re-serialized body.
@@ -188,41 +190,91 @@ async function handleNotify(interaction: APIApplicationCommandInteraction) {
 //
 // The button is intentionally open to anyone in the channel: the instance auto-stops when empty,
 // so letting players start it themselves is the point.
+// Auto-dismiss the ephemeral start confirmation after a few minutes (done by the amp-status cron).
+const EPHEMERAL_CLEANUP_MS = 3 * 60 * 1000;
+
+// Update the public status message to show "Start Requested" until the next scheduled check
+// refreshes it with the real state. Best-effort — failure here shouldn't fail the start.
+async function markStartRequested(instanceId: string): Promise<void> {
+    try {
+        const { data, error } = await supabase
+            .from('amp_instance_status')
+            .select('*')
+            .eq('instance_id', instanceId)
+            .single();
+        if (error || !data?.channel_id || !data?.message_id) {
+            return;
+        }
+
+        const message = buildAmpMessage({
+            title: data.title || 'Server Status',
+            template: data.description_template || DEFAULT_TEMPLATE,
+            status: 'Start Requested',
+            userCount: 0,
+            maxUsers: 0,
+            state: 'Start Requested',
+            color: AMP_COLORS.pending,
+            startButtonInstanceId: null // hide the button while a start is pending
+        });
+
+        await editChannelMessage(data.channel_id, data.message_id, message);
+        // Store this as last_status so the cron sees a change next tick and re-renders the real state.
+        await supabase
+            .from('amp_instance_status')
+            .update({ last_status: ampMessageSignature(message), updated_at: new Date().toISOString() })
+            .eq('instance_id', instanceId);
+    } catch (error) {
+        console.error('Failed to mark start requested:', error instanceof Error ? error.message : error);
+    }
+}
+
+// Record an ephemeral confirmation for later deletion by the amp-status cron (serverless can't
+// wait minutes itself). The cron deletes any rows whose delete_at has passed.
+async function scheduleEphemeralCleanup(applicationId: string, interactionToken: string): Promise<void> {
+    try {
+        const { error } = await supabase.from('ephemeral_message_cleanup').insert({
+            application_id: applicationId,
+            interaction_token: interactionToken,
+            delete_at: new Date(Date.now() + EPHEMERAL_CLEANUP_MS).toISOString()
+        });
+        if (error) {
+            console.error('Failed to schedule ephemeral cleanup:', error);
+        }
+    } catch (error) {
+        console.error('Failed to schedule ephemeral cleanup:', error instanceof Error ? error.message : error);
+    }
+}
+
 async function handleAmpStart(interaction: APIMessageComponentInteraction, res: VercelResponse): Promise<void> {
     const instanceId = interaction.data.custom_id.split(':')[1];
 
+    let content: string;
     if (!instanceId) {
-        res.status(200).json({
-            type: InteractionResponseType.ChannelMessageWithSource,
-            data: { content: 'Could not determine which server to start.', flags: EPHEMERAL }
-        });
-        return;
+        content = 'Could not determine which server to start.';
+    } else {
+        try {
+            const sessionId = await ampLogin();
+            // Ensure the instance daemon is up, then start the game application inside it. For an
+            // already-running daemon (the common case) StartInstance is a no-op and Core/Start does
+            // the real work of booting the game server.
+            await ampStartInstance(sessionId, instanceId);
+            await ampStartApplication(sessionId, instanceId);
+            // Reflect the pending start on the public status message until the next cron check.
+            await markStartRequested(instanceId);
+            content = '▶️ Start requested — the server is booting up. The status message will update shortly.';
+        } catch (error) {
+            console.error('Error starting AMP instance:', error instanceof Error ? error.message : error);
+            content = 'Sorry, I could not start the server. Please try again or check the AMP panel.';
+        }
     }
 
-    try {
-        const sessionId = await ampLogin();
-        // Ensure the instance daemon is up, then start the game application inside it. For an
-        // already-running daemon (the common case) StartInstance is a no-op and Core/Start does
-        // the real work of booting the game server.
-        await ampStartInstance(sessionId, instanceId);
-        await ampStartApplication(sessionId, instanceId);
-        res.status(200).json({
-            type: InteractionResponseType.ChannelMessageWithSource,
-            data: {
-                content: '▶️ Start requested — the server is booting up. The status message will update shortly.',
-                flags: EPHEMERAL
-            }
-        });
-    } catch (error) {
-        console.error('Error starting AMP instance:', error instanceof Error ? error.message : error);
-        res.status(200).json({
-            type: InteractionResponseType.ChannelMessageWithSource,
-            data: {
-                content: 'Sorry, I could not start the server. Please try again or check the AMP panel.',
-                flags: EPHEMERAL
-            }
-        });
-    }
+    // Schedule this ephemeral confirmation to auto-dismiss after a few minutes.
+    await scheduleEphemeralCleanup(interaction.application_id, interaction.token);
+
+    res.status(200).json({
+        type: InteractionResponseType.ChannelMessageWithSource,
+        data: { content, flags: EPHEMERAL }
+    });
 }
 
 // Export the handler for Vercel

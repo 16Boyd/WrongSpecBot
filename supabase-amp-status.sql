@@ -33,3 +33,25 @@ VALUES (
     E'### Connection Info\n**Community Server Name:** Wrong Spec\n**Domain:** your.domain.here\n**Port:** 8211\n**Password:** your_password\n\n### Server Stats:\n**Status:** {status}\n**Users:** {userCount}/32\n\n### Modified Server Settings\n- Friendly Fire Enabled\n- Backup Daily\n- Server Pauses when the last user logs off.'
 )
 ON CONFLICT (instance_id) DO NOTHING;
+
+-- Queue of ephemeral "Start requested" confirmation messages awaiting deletion. The button
+-- handler inserts a row (with the interaction token and a delete_at a few minutes out); the
+-- amp-status cron deletes each due message and removes its row. Serverless functions can't
+-- sleep for minutes, so the every-minute cron performs the delayed cleanup.
+CREATE TABLE IF NOT EXISTS ephemeral_message_cleanup (
+    id BIGSERIAL PRIMARY KEY,
+    application_id TEXT NOT NULL,       -- Discord application ID
+    interaction_token TEXT NOT NULL,    -- interaction token (authorises the delete; ~15 min TTL)
+    delete_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+ALTER TABLE ephemeral_message_cleanup ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow all operations on ephemeral_message_cleanup"
+ON ephemeral_message_cleanup
+FOR ALL
+USING (true)
+WITH CHECK (true);
+
+CREATE INDEX IF NOT EXISTS idx_ephemeral_cleanup_delete_at ON ephemeral_message_cleanup(delete_at);

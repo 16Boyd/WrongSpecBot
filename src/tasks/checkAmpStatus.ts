@@ -1,7 +1,8 @@
 import supabase from '../lib/supabase';
 import Logger from '../lib/logger';
 import { login, getAllInstances, getPlayerCount, appStateLabel, AmpInstance } from '../lib/amp';
-import { sendChannelMessage, editChannelMessage, MessageBody } from '../lib/discord';
+import { sendChannelMessage, editChannelMessage, deleteInteractionResponse, MessageBody } from '../lib/discord';
+import { buildAmpMessage, ampMessageSignature, DEFAULT_TEMPLATE, AMP_COLORS } from '../lib/ampMessage';
 
 function errorToLogMetadata(error: unknown): Record<string, unknown> {
     if (error instanceof Error) {
@@ -19,14 +20,6 @@ interface AmpStatusSettings {
     title: string | null;
     description_template: string | null;
 }
-
-// Fallback description used when the DB row has no description_template configured.
-// Static text (domain/port/etc.) is author-controlled; {status} and {userCount} are filled in live.
-const DEFAULT_TEMPLATE = [
-    '### Server Stats',
-    '**Status:** {status}',
-    '**Users:** {userCount}/{maxUsers}'
-].join('\n');
 
 interface InstanceSummary {
     instanceId: string;
@@ -88,54 +81,55 @@ function statusWord(instance: AmpInstance): string {
     return 'Offline';
 }
 
-// Fill the author-provided template with live values. Supported placeholders:
-//   {status}    - Online / Offline / (transitional state label)
-//   {userCount} - current player count
-//   {maxUsers}  - maximum player slots
-//   {state}     - raw AMP state label (e.g. "Ready", "Stopped")
-function renderDescription(template: string, instance: AmpInstance): string {
-    const players = getPlayerCount(instance);
-    return template
-        .replace(/\{status\}/g, statusWord(instance))
-        .replace(/\{userCount\}/g, String(players?.online ?? 0))
-        .replace(/\{maxUsers\}/g, String(players?.max ?? 0))
-        .replace(/\{state\}/g, appStateLabel(instance.AppState));
-}
-
 function buildMessage(instance: AmpInstance, settings: AmpStatusSettings): MessageBody {
     const isReady = instance.AppState === READY_STATE;
     const isTransitioning = TRANSITIONAL_STATES.includes(instance.AppState);
     // Show the Start button whenever the app is stopped/failed/etc. — anything that isn't Ready
     // and isn't already mid-transition.
     const showStart = !isReady && !isTransitioning;
+    const players = getPlayerCount(instance);
 
-    // Colour the embed bar by status: green online, yellow transitioning, red offline.
-    const color = isReady ? 0x00ff00 : isTransitioning ? 0xffcc00 : 0xff0000;
-    const title = settings.title || instance.FriendlyName || instance.Module || 'Server Status';
-    const description = renderDescription(settings.description_template || DEFAULT_TEMPLATE, instance);
-
-    return {
-        embeds: [{ title, description, color }],
-        // Always send a components array so an edit clears the button once the server is running.
-        components: showStart
-            ? [{
-                type: 1, // Action row
-                components: [{
-                    type: 2, // Button
-                    style: 3, // Success (green)
-                    label: 'Start Server',
-                    emoji: { name: '▶️' },
-                    custom_id: `amp_start:${instance.InstanceID}`
-                }]
-            }]
-            : []
-    };
+    return buildAmpMessage({
+        title: settings.title || instance.FriendlyName || instance.Module || 'Server Status',
+        template: settings.description_template || DEFAULT_TEMPLATE,
+        status: statusWord(instance),
+        userCount: players?.online ?? 0,
+        maxUsers: players?.max ?? 0,
+        state: appStateLabel(instance.AppState),
+        // Green online, yellow transitioning, red offline.
+        color: isReady ? AMP_COLORS.online : isTransitioning ? AMP_COLORS.pending : AMP_COLORS.offline,
+        startButtonInstanceId: showStart ? instance.InstanceID : null
+    });
 }
 
-// Fingerprint the rendered message so we only edit Discord when the visible content changes
-// (covers live status/player changes AND edits to the template or title in Supabase).
-function messageSignature(body: MessageBody): string {
-    return JSON.stringify({ embeds: body.embeds, components: body.components });
+// Delete any ephemeral "Start requested" confirmation messages whose scheduled time has passed.
+// The button handler records these (interaction token + delete_at); serverless can't wait minutes
+// itself, so this every-minute task performs the deletion.
+async function processEphemeralCleanups(logger: Logger): Promise<void> {
+    const nowIso = new Date().toISOString();
+    const { data, error } = await supabase
+        .from('ephemeral_message_cleanup')
+        .select('*')
+        .lte('delete_at', nowIso);
+
+    if (error) {
+        logger.error('Failed to load ephemeral cleanups', errorToLogMetadata(error));
+        return;
+    }
+    if (!data || data.length === 0) {
+        return;
+    }
+
+    for (const row of data) {
+        try {
+            await deleteInteractionResponse(row.application_id, row.interaction_token);
+        } catch (error) {
+            // Token expired or message already gone — log and still remove the record.
+            logger.warn(`Could not delete ephemeral message (cleanup ${row.id})`, errorToLogMetadata(error));
+        }
+        await supabase.from('ephemeral_message_cleanup').delete().eq('id', row.id);
+    }
+    logger.info(`Processed ${data.length} ephemeral message cleanup(s)`);
 }
 
 // Post or update the Discord status message for a single configured instance.
@@ -163,7 +157,7 @@ async function processInstance(
     });
 
     const message = buildMessage(instance, settings);
-    const signature = messageSignature(message);
+    const signature = ampMessageSignature(message);
 
     // Log the exact data going into the message so the rendered output is fully visible.
     const players = getPlayerCount(instance);
@@ -221,6 +215,9 @@ export async function checkAmpStatus(): Promise<CheckAmpStatusResult> {
 
     try {
         logger.info('Starting AMP instance status check...');
+
+        // Delete any due "Start requested" ephemeral confirmations (independent of AMP config).
+        await processEphemeralCleanups(logger);
 
         // If AMP isn't configured at all, the feature is off — skip without calling AMP.
         if (!process.env.AMP_URL) {
