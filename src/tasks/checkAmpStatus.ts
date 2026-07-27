@@ -41,6 +41,8 @@ export interface CheckAmpStatusResult {
     success: boolean;
     timestamp: string;
     instances?: InstanceSummary[];
+    // Every instance AMP reports (regardless of configuration) — a setup aid for finding InstanceIDs.
+    availableInstances?: Array<{ instanceId: string; name: string; module: string; running: boolean }>;
     error?: string;
 }
 
@@ -153,6 +155,25 @@ async function processInstance(
 
     const message = buildMessage(instance, settings);
     const signature = messageSignature(message);
+
+    // Log the exact data going into the message so the rendered output is fully visible.
+    const players = getPlayerCount(instance);
+    const embed = (message.embeds?.[0] ?? {}) as { title?: string; description?: string; color?: number };
+    logger.info(`Prepared message for ${instance.FriendlyName}`, {
+        title: embed.title,
+        status: statusWord(instance),
+        userCount: players?.online ?? 0,
+        maxUsers: players?.max ?? 0,
+        rawActiveUsers: instance.Metrics?.['Active Users'],
+        endpoints: instance.ApplicationEndpoints,
+        color: embed.color,
+        showStartButton: (message.components?.length ?? 0) > 0,
+        templateSource: settings.description_template ? 'db' : 'default',
+        description: embed.description,
+        hasExistingMessage: !!settings.message_id,
+        signatureChanged: signature !== settings.last_status
+    });
+
     let updated = false;
 
     if (!settings.message_id) {
@@ -192,20 +213,37 @@ export async function checkAmpStatus(): Promise<CheckAmpStatusResult> {
     try {
         logger.info('Starting AMP instance status check...');
 
-        const rows = (await getAllSettings(logger)).filter(row => row.instance_id && row.channel_id);
-        if (rows.length === 0) {
-            logger.info('No AMP instances configured, skipping');
+        // If AMP isn't configured at all, the feature is off — skip without calling AMP.
+        if (!process.env.AMP_URL) {
+            logger.info('AMP_URL not set, skipping AMP status check');
             await logger.flush();
             return { success: true, timestamp: new Date().toISOString() };
         }
 
+        const rows = (await getAllSettings(logger)).filter(row => row.instance_id && row.channel_id);
         logger.info(`Found ${rows.length} configured AMP instance row(s)`, {
             instanceIds: rows.map(r => r.instance_id)
         });
 
-        // One login + one GetInstances covers every configured row.
+        // One login + one GetInstances covers every configured row. getAllInstances() logs the
+        // full list, so InstanceIDs can be discovered here even before any row is configured.
         const sessionId = await login();
         const allInstances = await getAllInstances(sessionId);
+
+        // Always surface the discovered instances (handy during setup).
+        const availableInstances = allInstances.map(i => ({
+            instanceId: i.InstanceID,
+            name: i.FriendlyName,
+            module: i.Module,
+            running: i.Running
+        }));
+
+        if (rows.length === 0) {
+            logger.info('No AMP instance rows configured yet — copy an InstanceID from the list above into the amp_instance_status table to activate a status message');
+            await logger.flush();
+            return { success: true, timestamp: new Date().toISOString(), availableInstances };
+        }
+
         const byId = new Map(allInstances.map(inst => [inst.InstanceID, inst]));
 
         const summaries: InstanceSummary[] = [];
@@ -223,7 +261,7 @@ export async function checkAmpStatus(): Promise<CheckAmpStatusResult> {
         }
 
         await logger.flush();
-        return { success: true, timestamp: new Date().toISOString(), instances: summaries };
+        return { success: true, timestamp: new Date().toISOString(), instances: summaries, availableInstances };
     } catch (error) {
         logger.error('Error during AMP status check', errorToLogMetadata(error));
         await logger.flush();
