@@ -310,6 +310,17 @@ export async function startApplication(controllerSession: string, instanceId: st
     }
 }
 
+// One-shot "start this server": authenticate, ensure the instance daemon is up, then start the
+// game application inside it. Shared by the button handler (immediate attempt) and the amp-status
+// cron (guaranteed fallback), so both start a server the exact same way.
+export async function startServer(instanceId: string): Promise<void> {
+    const sessionId = await login();
+    // For an already-running daemon (the common case) StartInstance is a no-op; Core/Start does the
+    // real work of booting the game application.
+    await startInstance(sessionId, instanceId);
+    await startApplication(sessionId, instanceId);
+}
+
 // Convenience: extract the online/max player count from an instance's metrics.
 export function getPlayerCount(instance: AmpInstance): { online: number; max: number } | null {
     const metric = instance.Metrics?.['Active Users'];

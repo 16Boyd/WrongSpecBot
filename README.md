@@ -387,17 +387,28 @@ and edits it in place whenever that instance's status changes. Anyone in the cha
 Server** — this is intentional, since the point is to let players bring an auto-stopped server back
 online.
 
-When someone presses **Start Server**, the status message immediately shows `Start Requested` until the
-next check reflects the real state, and the private "Start requested" confirmation shown to that user is
-auto-dismissed a few minutes later (the `ephemeral_message_cleanup` table, created by the setup SQL,
-tracks these — the every-minute cron performs the delayed deletion, since serverless functions can't
-wait). Because a game server can take a while to leave the Stopped state, a **2-minute grace window**
-(tracked by the `start_requested_at` column) keeps the `Start Requested` message in place if the app is
-still offline when the cron runs — so it doesn't briefly flip back to `Offline` mid-boot. Once the
-server starts transitioning/comes online, or the grace window elapses, the message updates normally.
-AMP has two layers: the instance *daemon* (started via `ADSModule/StartInstance`) and the game
-*application* inside it (started via the instance's own `Core/Start`, which needs an instance-scoped
-login). The button starts both.
+When someone presses **Start Server**, the status message immediately shows `Start Requested` and the
+user gets a private confirmation that auto-dismisses a few minutes later (the `ephemeral_message_cleanup`
+table, created by the setup SQL, tracks these — the every-minute cron performs the delayed deletion,
+since serverless functions can't wait).
+
+**How the start actually runs (and why it's reliable).** The AMP start chain (login → `StartInstance`
+→ instance login → `Core/Start`) takes longer than Discord's ~3-second interaction limit, and a
+serverless function is frozen once it sends its response — so the start can't run before the reply
+(times out) *or* naively after it (frozen). Instead the button does only the fast work before
+replying — flip the message to `Start Requested` and set `start_pending` — then starts the server in
+the background via Vercel's `waitUntil()` (which keeps the function alive for that work). If the runtime
+still froze that background attempt, the `start_pending` flag makes the **amp-status cron perform the
+start itself within a minute**, so the server always starts; the `waitUntil` path just makes it usually
+immediate. (Re-starting an already-running server is a no-op in AMP, so the two paths can't conflict.)
+
+Because a game server can take a while to leave the Stopped state, a **2-minute grace window** (tracked
+by the `start_requested_at` column) keeps the `Start Requested` message in place while the app is still
+offline, so it doesn't briefly flip back to `Offline` mid-boot. Once the server starts
+transitioning/comes online, or the grace window elapses, the message updates normally. AMP has two
+layers: the instance *daemon* (started via `ADSModule/StartInstance`) and the game *application* inside
+it (started via the instance's own `Core/Start`, which needs an instance-scoped login). The start does
+both.
 
 ---
 

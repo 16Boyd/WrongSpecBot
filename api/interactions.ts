@@ -11,7 +11,8 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import axios from 'axios';
 import supabase from '../src/lib/supabase';
 import { getAccessToken, getTokenPriceInGold } from '../src/lib/blizzard';
-import { login as ampLogin, startInstance as ampStartInstance, startApplication as ampStartApplication, ampHostname } from '../src/lib/amp';
+import { waitUntil } from '@vercel/functions';
+import { startServer, ampHostname } from '../src/lib/amp';
 import { editChannelMessage } from '../src/lib/discord';
 import { buildAmpMessage, ampMessageSignature, DEFAULT_TEMPLATE, AMP_COLORS } from '../src/lib/ampMessage';
 
@@ -221,10 +222,12 @@ async function markStartRequested(instanceId: string): Promise<void> {
         // Store this as last_status so the cron sees a change next tick and re-renders the real
         // state. start_requested_at opens the grace window: while it's recent and the app is still
         // offline, the cron keeps this "Start Requested" message instead of reverting to Offline.
+        // start_pending marks that a start must happen — the cron performs it if the button's
+        // background attempt was frozen by the serverless runtime.
         const now = new Date().toISOString();
         await supabase
             .from('amp_instance_status')
-            .update({ last_status: ampMessageSignature(message), start_requested_at: now, updated_at: now })
+            .update({ last_status: ampMessageSignature(message), start_requested_at: now, start_pending: true, updated_at: now })
             .eq('instance_id', instanceId);
     } catch (error) {
         console.error('Failed to mark start requested:', error instanceof Error ? error.message : error);
@@ -249,46 +252,41 @@ async function scheduleEphemeralCleanup(applicationId: string, interactionToken:
 }
 
 async function handleAmpStart(interaction: APIMessageComponentInteraction, res: VercelResponse): Promise<void> {
-    // Acknowledge the click IMMEDIATELY with a deferred (ephemeral) response. The AMP work below —
-    // a controller login, StartInstance, a second instance-scoped login, and Core/Start — regularly
-    // takes longer than Discord's ~3s interaction window, which is what produced the "Did not
-    // respond in time" errors. Deferring ACKs in milliseconds; we then do the work and edit this
-    // reply with the outcome. The serverless function stays alive until this handler's promise
-    // resolves, so the awaited work still runs (the same pattern /token uses successfully here).
-    res.status(200).json({
-        type: InteractionResponseType.DeferredChannelMessageWithSource,
-        data: { flags: EPHEMERAL }
-    });
-
     const instanceId = interaction.data.custom_id.split(':')[1];
 
-    let content: string;
     if (!instanceId) {
-        content = 'Could not determine which server to start.';
-    } else {
-        try {
-            const sessionId = await ampLogin();
-            // Ensure the instance daemon is up, then start the game application inside it. For an
-            // already-running daemon (the common case) StartInstance is a no-op and Core/Start does
-            // the real work of booting the game server.
-            await ampStartInstance(sessionId, instanceId);
-            await ampStartApplication(sessionId, instanceId);
-            // Reflect the pending start on the public status message until the next cron check.
-            await markStartRequested(instanceId);
-            content = '▶️ Start requested — the server is booting up. The status message will update shortly.';
-        } catch (error) {
-            console.error('Error starting AMP instance:', error instanceof Error ? error.message : error);
-            content = 'Sorry, I could not start the server. Please try again or check the AMP panel.';
-        }
+        res.status(200).json({
+            type: InteractionResponseType.ChannelMessageWithSource,
+            data: { content: 'Could not determine which server to start.', flags: EPHEMERAL }
+        });
+        return;
     }
 
-    // Deliver the outcome by editing the deferred reply, then schedule its auto-dismiss.
-    try {
-        await editOriginalResponse(interaction.application_id, interaction.token, content);
-    } catch (error) {
-        console.error('Failed to edit deferred start response:', error instanceof Error ? error.message : error);
-    }
+    // Do the FAST, must-not-be-lost work BEFORE responding: flip the public message to "Start
+    // Requested" and set start_pending. These are quick (Supabase + one Discord edit, well within
+    // Discord's ~3s window) and — crucially — reliable, because they run before the response. The
+    // slow AMP start does NOT run here: doing it before the reply blew past the 3s window ("Did not
+    // respond in time"), and doing it after a plain response gets frozen by the serverless runtime.
+    await markStartRequested(instanceId);
     await scheduleEphemeralCleanup(interaction.application_id, interaction.token);
+
+    res.status(200).json({
+        type: InteractionResponseType.ChannelMessageWithSource,
+        data: {
+            content: '▶️ Start requested — the server is booting up. The status message will update shortly.',
+            flags: EPHEMERAL
+        }
+    });
+
+    // Kick off the actual start in the background. waitUntil() tells Vercel to keep the function
+    // alive until this resolves (a plain await after the response would be frozen). If it still
+    // gets frozen, start_pending set above makes the amp-status cron perform the start within a
+    // minute — so the server always starts, this path just makes it usually immediate.
+    waitUntil(
+        startServer(instanceId).catch(error =>
+            console.error('Background AMP start failed (cron will retry):', error instanceof Error ? error.message : error)
+        )
+    );
 }
 
 // Export the handler for Vercel
