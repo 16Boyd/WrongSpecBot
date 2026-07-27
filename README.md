@@ -295,6 +295,14 @@ and edits it in place whenever that instance's status changes. Anyone in the cha
 Server** — this is intentional, since the point is to let players bring an auto-stopped server back
 online.
 
+When someone presses **Start Server**, the status message immediately shows `Start Requested` until the
+next check reflects the real state, and the private "Start requested" confirmation shown to that user is
+auto-dismissed a few minutes later (the `ephemeral_message_cleanup` table, created by the setup SQL,
+tracks these — the every-minute cron performs the delayed deletion, since serverless functions can't
+wait). AMP has two layers: the instance *daemon* (started via `ADSModule/StartInstance`) and the game
+*application* inside it (started via the instance's own `Core/Start`, which needs an instance-scoped
+login). The button starts both.
+
 ---
 
 ## 6. Environment Variables
