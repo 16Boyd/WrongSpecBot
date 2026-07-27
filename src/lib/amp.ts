@@ -187,6 +187,9 @@ export async function getAllInstances(sessionId: string): Promise<AmpInstance[]>
                 metricKeys: Object.keys(i.Metrics ?? {})
             }))
         });
+        // Dump the full raw payload so any additional fields (e.g. a game/app name for a
+        // GenericModule instance) are visible while we decide what to surface.
+        console.info('AMP GetInstances raw payload', { raw: snippet(payload, 4000) });
     }
 
     return instances;
