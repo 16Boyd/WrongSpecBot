@@ -69,15 +69,24 @@ function snippet(value: unknown, max = 1000): string {
 
 // Perform a POST call against the AMP API. Logs the endpoint on the way in and full HTTP
 // error detail (status + response body) on failure, then rethrows an informative Error.
-async function ampCall<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
+//
+// The session is sent in the `Authorization: Bearer` header. AMP deprecated passing it as a
+// `SESSIONID` body field, and — critically — a body SESSIONID does NOT authenticate proxied
+// instance calls (they fail with "requires the Session.Exists permission"), whereas the Bearer
+// header is carried through the controller's proxy to the target instance.
+async function ampCall<T>(endpoint: string, body: Record<string, unknown>, sessionId?: string): Promise<T> {
     const url = `${ampBaseUrl()}/API/${endpoint}`;
     console.info(`AMP call -> ${url} (insecureTls=${insecureTls})`);
+    const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Accept: 'application/json'
+    };
+    if (sessionId) {
+        headers['Authorization'] = `Bearer ${sessionId}`;
+    }
     try {
         const response = await axios.post<T>(url, body, {
-            headers: {
-                'Content-Type': 'application/json',
-                Accept: 'application/json'
-            },
+            headers,
             timeout: 15000,
             httpsAgent
         });
@@ -165,7 +174,7 @@ function flattenInstances(payload: unknown): AmpInstance[] {
 
 // Fetch every instance visible to the account across all ADS targets.
 export async function getAllInstances(sessionId: string): Promise<AmpInstance[]> {
-    const payload = await ampCall<unknown>('ADSModule/GetInstances', { SESSIONID: sessionId });
+    const payload = await ampCall<unknown>('ADSModule/GetInstances', {}, sessionId);
     const instances = flattenInstances(payload);
 
     if (instances.length === 0) {
@@ -215,9 +224,8 @@ export async function startInstance(sessionId: string, instanceId: string): Prom
     // AMP ignores unrecognised keys (an unknown key returns 200 but starts nothing).
     const data = await ampCall<ActionResultResponse>('ADSModule/StartInstance', {
         InstanceName: instanceId,
-        InstanceId: instanceId,
-        SESSIONID: sessionId
-    });
+        InstanceId: instanceId
+    }, sessionId);
     console.info('AMP StartInstance result', {
         instanceId,
         status: data?.Status,
@@ -239,7 +247,8 @@ export async function startApplication(sessionId: string, instanceId: string): P
     console.info(`AMP Core/Start (application) requested for ${instanceId}`);
     const data = await ampCall<ActionResultResponse>(
         `ADSModule/Servers/${instanceId}/API/Core/Start`,
-        { SESSIONID: sessionId }
+        {},
+        sessionId
     );
     console.info('AMP Core/Start result', {
         instanceId,
