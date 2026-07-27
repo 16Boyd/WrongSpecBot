@@ -1,4 +1,5 @@
 import axios from 'axios';
+import https from 'node:https';
 
 // Thin client for the CubeCoders AMP (Application Management Panel) API.
 //
@@ -53,6 +54,12 @@ function ampBaseUrl(): string {
     return url.replace(/\/+$/, '');
 }
 
+// AMP is commonly served over HTTPS with a self-signed certificate, which Node rejects by
+// default. Setting AMP_INSECURE_TLS=true opts out of certificate verification for AMP calls
+// ONLY (this agent is never applied to Discord/Blizzard/Supabase requests).
+const insecureTls = ['true', '1', 'yes'].includes((process.env.AMP_INSECURE_TLS || '').toLowerCase());
+const httpsAgent = insecureTls ? new https.Agent({ rejectUnauthorized: false }) : undefined;
+
 // Perform a POST call against the AMP API.
 async function ampCall<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
     const response = await axios.post<T>(`${ampBaseUrl()}/API/${endpoint}`, body, {
@@ -60,7 +67,8 @@ async function ampCall<T>(endpoint: string, body: Record<string, unknown>): Prom
             'Content-Type': 'application/json',
             Accept: 'application/json'
         },
-        timeout: 15000
+        timeout: 15000,
+        httpsAgent
     });
     return response.data;
 }

@@ -201,6 +201,7 @@ WATCH_REGION=US
 AMP_URL=https://your-amp-panel:8080
 AMP_USERNAME=your_amp_username
 AMP_PASSWORD=your_amp_password
+AMP_INSECURE_TLS=true   # only if AMP uses a self-signed HTTPS certificate
 ```
 
 ### Step 4: Deploy
@@ -268,8 +269,12 @@ live values. The following placeholders are substituted on every update:
 
 Set `AMP_URL`, `AMP_USERNAME`, and `AMP_PASSWORD` in Vercel (used by both the scheduled `/api/amp-status`
 endpoint and the button handler in `/api/interactions`). Use an AMP account with permission to view and
-start the instance. `AMP_URL` is the base panel URL, e.g. `https://amp.example.com` or `http://1.2.3.4:8080`
-(a self-signed HTTPS certificate must be trusted by the platform, otherwise use a valid cert).
+start the instance. `AMP_URL` is the base panel URL, e.g. `https://amp.example.com` or `http://1.2.3.4:8080`.
+
+If AMP is served over **HTTPS with a self-signed certificate**, also set `AMP_INSECURE_TLS=true`. Node
+rejects self-signed certificates by default (you'd see `Client network socket disconnected before secure
+TLS connection was established` or a certificate error); this flag skips certificate verification for AMP
+requests only. All other outbound TLS (Discord, Blizzard, Supabase) stays fully verified.
 
 ### Step 2: Configure instances in Supabase
 
@@ -327,6 +332,9 @@ DEFAULT_CHANNEL_ID=your_channel_id_here
 AMP_URL=https://your-amp-panel:8080
 AMP_USERNAME=your_amp_username
 AMP_PASSWORD=your_amp_password
+# Set to true ONLY if AMP is served over HTTPS with a self-signed certificate. Skips TLS
+# certificate verification for AMP requests only (Discord/Blizzard/Supabase stay verified).
+AMP_INSECURE_TLS=true
 ```
 
 **⚠️ Security Note**: Never commit your `.env` file to version control. It's already included in `.gitignore`.
