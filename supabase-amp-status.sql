@@ -9,12 +9,16 @@ CREATE TABLE IF NOT EXISTS amp_instance_status (
     description_template TEXT,      -- Embed body. Supports {status} {userCount} {maxUsers} {state} {domain} {port}
     port INTEGER,                   -- Port to show for {port}. Set per row: games expose several
                                     --   ports (game/query/RCON/…) and AMP doesn't say which to display.
+    start_requested_at TIMESTAMP WITH TIME ZONE,  -- Set when Start Server is pressed. Grace window:
+                                    --   while recent and the app is still offline, the cron keeps the
+                                    --   "Start Requested" message instead of reverting to Offline.
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- For existing installs created before the port column was added (safe to run repeatedly).
+-- For existing installs created before these columns were added (safe to run repeatedly).
 ALTER TABLE amp_instance_status ADD COLUMN IF NOT EXISTS port INTEGER;
+ALTER TABLE amp_instance_status ADD COLUMN IF NOT EXISTS start_requested_at TIMESTAMP WITH TIME ZONE;
 
 -- Enable Row Level Security
 ALTER TABLE amp_instance_status ENABLE ROW LEVEL SECURITY;
