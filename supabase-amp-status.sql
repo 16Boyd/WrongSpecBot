@@ -24,13 +24,15 @@ WITH CHECK (true);
 
 -- Example: add one row per instance. instance_id is the AMP InstanceID (GUID). {status} and
 -- {userCount} (plus {maxUsers} and {state}) are replaced with live values on every update.
--- Duplicate this INSERT for each instance you want to display.
+-- {split} breaks the body into side-by-side columns (each chunk becomes an inline embed field),
+-- which keeps the message shorter vertically. Here everything before {split} is the left column and
+-- everything after is the right column. Duplicate this INSERT for each instance you want to display.
 INSERT INTO amp_instance_status (instance_id, channel_id, title, description_template)
 VALUES (
     'REPLACE_WITH_AMP_INSTANCE_GUID',
     'REPLACE_WITH_DISCORD_CHANNEL_ID',
     'Palworld',
-    E'### Connection Info\n**Community Server Name:** Wrong Spec\n**Domain:** your.domain.here\n**Port:** 8211\n**Password:** your_password\n\n### Server Stats:\n**Status:** {status}\n**Users:** {userCount}/32\n\n### Modified Server Settings\n- Friendly Fire Enabled\n- Backup Daily\n- Server Pauses when the last user logs off.'
+    E'### Connection Info\n**Community Server Name:** Wrong Spec\n**Domain:** your.domain.here\n**Port:** 8211\n**Password:** your_password\n\n### Server Stats\n**Status:** {status}\n**Users:** {userCount}/32\n\n{split}\n\n### Modified Server Settings\n- Friendly Fire Enabled\n- Backup Daily\n- Server Pauses when the last user logs off.'
 )
 ON CONFLICT (instance_id) DO NOTHING;
 
