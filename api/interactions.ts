@@ -220,10 +220,13 @@ async function markStartRequested(instanceId: string): Promise<void> {
         });
 
         await editChannelMessage(data.channel_id, data.message_id, message);
-        // Store this as last_status so the cron sees a change next tick and re-renders the real state.
+        // Store this as last_status so the cron sees a change next tick and re-renders the real
+        // state. start_requested_at opens the grace window: while it's recent and the app is still
+        // offline, the cron keeps this "Start Requested" message instead of reverting to Offline.
+        const now = new Date().toISOString();
         await supabase
             .from('amp_instance_status')
-            .update({ last_status: ampMessageSignature(message), updated_at: new Date().toISOString() })
+            .update({ last_status: ampMessageSignature(message), start_requested_at: now, updated_at: now })
             .eq('instance_id', instanceId);
     } catch (error) {
         console.error('Failed to mark start requested:', error instanceof Error ? error.message : error);

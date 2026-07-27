@@ -22,6 +22,10 @@ interface AmpStatusSettings {
     // Port to show for {port}. Author-set per row, since games expose multiple ports and AMP
     // doesn't tell us which one to display.
     port: number | null;
+    // ISO timestamp set when a user pressed Start Server. While this is recent (see
+    // START_REQUEST_GRACE_MS) and the app is still offline, the cron leaves the "Start Requested"
+    // message in place instead of flipping it back to Offline mid-boot.
+    start_requested_at: string | null;
 }
 
 interface InstanceSummary {
@@ -50,6 +54,12 @@ const READY_STATE = 20;
 // AppStates where the instance is mid-transition; we hide the Start button so a user
 // can't fire a redundant start while one is already in flight.
 const TRANSITIONAL_STATES = [5, 7, 10, 30, 40, 70, 75];
+
+// Grace period after a user presses Start Server. A game server can take a while to leave the
+// Stopped state, and the cron runs every minute, so the first tick after a click often still sees
+// the app Offline. Within this window we keep the "Start Requested" message rather than flipping it
+// back to Offline, which would look like the start failed.
+const START_REQUEST_GRACE_MS = 2 * 60 * 1000;
 
 // Load every configured instance (one row each). Rows missing a channel are skipped upstream.
 async function getAllSettings(logger: Logger): Promise<AmpStatusSettings[]> {
@@ -161,6 +171,28 @@ async function processInstance(
         metricKeys: Object.keys(instance.Metrics ?? {})
     });
 
+    // Offline = not ready and not mid-transition (Stopped/Failed/etc.).
+    const isOffline = instance.AppState !== READY_STATE && !TRANSITIONAL_STATES.includes(instance.AppState);
+
+    // If a start was requested recently and the server is still offline (hasn't begun booting
+    // yet), leave the "Start Requested" message untouched until the grace window elapses.
+    if (isOffline && settings.start_requested_at) {
+        const elapsedMs = Date.now() - Date.parse(settings.start_requested_at);
+        if (Number.isFinite(elapsedMs) && elapsedMs >= 0 && elapsedMs < START_REQUEST_GRACE_MS) {
+            logger.info(
+                `Start requested ${Math.round(elapsedMs / 1000)}s ago for ${instance.FriendlyName} and still offline ` +
+                `— keeping "Start Requested" message (grace ${START_REQUEST_GRACE_MS / 1000}s)`
+            );
+            return {
+                instanceId: settings.instance_id,
+                name: instance.FriendlyName,
+                running: false,
+                state: appStateLabel(instance.AppState),
+                updated: false
+            };
+        }
+    }
+
     const message = buildMessage(instance, settings);
     const signature = ampMessageSignature(message);
 
@@ -194,14 +226,15 @@ async function processInstance(
     if (!settings.message_id) {
         // No live message yet: post a fresh one.
         const messageId = await sendChannelMessage(settings.channel_id, message);
-        await updateSettings(settings.instance_id, { message_id: messageId, last_status: signature }, logger);
+        await updateSettings(settings.instance_id, { message_id: messageId, last_status: signature, start_requested_at: null }, logger);
         updated = true;
         logger.info(`Posted new AMP status message for ${instance.FriendlyName}: ${messageId}`);
     } else if (signature !== settings.last_status) {
         // Something visible changed: edit in place so the message stays put in the channel.
+        // Clearing start_requested_at retires the grace window now that we're showing real state.
         try {
             await editChannelMessage(settings.channel_id, settings.message_id, message);
-            await updateSettings(settings.instance_id, { last_status: signature }, logger);
+            await updateSettings(settings.instance_id, { last_status: signature, start_requested_at: null }, logger);
             updated = true;
             logger.info(`Edited AMP status message for ${instance.FriendlyName}: ${settings.message_id}`);
         } catch (error) {

@@ -391,7 +391,11 @@ When someone presses **Start Server**, the status message immediately shows `Sta
 next check reflects the real state, and the private "Start requested" confirmation shown to that user is
 auto-dismissed a few minutes later (the `ephemeral_message_cleanup` table, created by the setup SQL,
 tracks these — the every-minute cron performs the delayed deletion, since serverless functions can't
-wait). AMP has two layers: the instance *daemon* (started via `ADSModule/StartInstance`) and the game
+wait). Because a game server can take a while to leave the Stopped state, a **2-minute grace window**
+(tracked by the `start_requested_at` column) keeps the `Start Requested` message in place if the app is
+still offline when the cron runs — so it doesn't briefly flip back to `Offline` mid-boot. Once the
+server starts transitioning/comes online, or the grace window elapses, the message updates normally.
+AMP has two layers: the instance *daemon* (started via `ADSModule/StartInstance`) and the game
 *application* inside it (started via the instance's own `Core/Start`, which needs an instance-scoped
 login). The button starts both.
 
