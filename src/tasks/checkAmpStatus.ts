@@ -15,7 +15,17 @@ interface AmpStatusSettings {
     instance_id: string | null;
     message_id: string | null;
     last_status: string | null;
+    title: string | null;
+    description_template: string | null;
 }
+
+// Fallback description used when the DB row has no description_template configured.
+// Static text (domain/port/etc.) is author-controlled; {status} and {userCount} are filled in live.
+const DEFAULT_TEMPLATE = [
+    '### Server Stats',
+    '**Status:** {status}',
+    '**Users:** {userCount}/{maxUsers}'
+].join('\n');
 
 export interface CheckAmpStatusResult {
     success: boolean;
@@ -58,61 +68,39 @@ async function updateSettings(fields: Partial<AmpStatusSettings>, logger: Logger
     }
 }
 
-// A compact fingerprint of everything we render, so we only edit the Discord message
-// when something visible actually changed (avoids a Discord API write every minute).
-function statusSignature(instance: AmpInstance): string {
-    const players = getPlayerCount(instance);
-    const endpoints = (instance.ApplicationEndpoints ?? [])
-        .map(e => `${e.DisplayName}=${e.Endpoint}`)
-        .join(',');
-    return [
-        instance.Running,
-        instance.AppState,
-        players ? `${players.online}/${players.max}` : 'n/a',
-        endpoints
-    ].join('|');
+// A human-readable status word for the {status} placeholder.
+function statusWord(instance: AmpInstance): string {
+    if (instance.Running) return 'Online';
+    if (TRANSITIONAL_STATES.includes(instance.AppState)) return appStateLabel(instance.AppState);
+    return 'Offline';
 }
 
-function buildMessage(instance: AmpInstance): MessageBody {
+// Fill the author-provided template with live values. Supported placeholders:
+//   {status}    - Online / Offline / (transitional state label)
+//   {userCount} - current player count
+//   {maxUsers}  - maximum player slots
+//   {state}     - raw AMP state label (e.g. "Ready", "Stopped")
+function renderDescription(template: string, instance: AmpInstance): string {
+    const players = getPlayerCount(instance);
+    return template
+        .replace(/\{status\}/g, statusWord(instance))
+        .replace(/\{userCount\}/g, String(players?.online ?? 0))
+        .replace(/\{maxUsers\}/g, String(players?.max ?? 0))
+        .replace(/\{state\}/g, appStateLabel(instance.AppState));
+}
+
+function buildMessage(instance: AmpInstance, settings: AmpStatusSettings): MessageBody {
     const running = instance.Running;
     const isTransitioning = TRANSITIONAL_STATES.includes(instance.AppState);
     const showStart = !running && !isTransitioning;
 
-    const emoji = running ? '🟢' : isTransitioning ? '🟡' : '🔴';
+    // Colour the embed bar by status for at-a-glance readability (green/yellow/red).
     const color = running ? 0x00ff00 : isTransitioning ? 0xffcc00 : 0xff0000;
+    const title = settings.title || instance.FriendlyName || instance.Module || 'Server Status';
+    const description = renderDescription(settings.description_template || DEFAULT_TEMPLATE, instance);
 
-    const fields: Array<{ name: string; value: string; inline?: boolean }> = [
-        { name: 'Game', value: instance.Module || 'Unknown', inline: true },
-        { name: 'Status', value: appStateLabel(instance.AppState), inline: true }
-    ];
-
-    const players = getPlayerCount(instance);
-    if (players) {
-        fields.push({ name: 'Players Online', value: `${players.online} / ${players.max}`, inline: true });
-    }
-
-    const endpoints = instance.ApplicationEndpoints ?? [];
-    if (endpoints.length > 0) {
-        fields.push({
-            name: 'Server Info',
-            value: endpoints.map(e => `**${e.DisplayName}:** \`${e.Endpoint}\``).join('\n'),
-            inline: false
-        });
-    }
-
-    const body: MessageBody = {
-        embeds: [{
-            title: `${emoji} ${instance.FriendlyName}`,
-            description: running
-                ? 'The server is online and accepting players.'
-                : showStart
-                    ? 'The server is currently stopped. Press **Start Server** to bring it online.'
-                    : 'The server is changing state, please wait…',
-            color,
-            fields,
-            timestamp: new Date().toISOString(),
-            footer: { text: 'AMP Instance Status' }
-        }],
+    return {
+        embeds: [{ title, description, color }],
         // Always send a components array so an edit clears the button once the server is running.
         components: showStart
             ? [{
@@ -127,8 +115,12 @@ function buildMessage(instance: AmpInstance): MessageBody {
             }]
             : []
     };
+}
 
-    return body;
+// Fingerprint the rendered message so we only edit Discord when the visible content changes
+// (covers live status/player changes AND edits to the template or title in Supabase).
+function messageSignature(body: MessageBody): string {
+    return JSON.stringify({ embeds: body.embeds, components: body.components });
 }
 
 export async function checkAmpStatus(): Promise<CheckAmpStatusResult> {
@@ -157,8 +149,8 @@ export async function checkAmpStatus(): Promise<CheckAmpStatusResult> {
             };
         }
 
-        const signature = statusSignature(instance);
-        const message = buildMessage(instance);
+        const message = buildMessage(instance, settings);
+        const signature = messageSignature(message);
 
         let updated = false;
 

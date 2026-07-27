@@ -252,8 +252,16 @@ game-server instance and keeps it updated. When the instance is stopped, the mes
 **Start Server** button that calls the AMP API to boot it — handy when the instance is configured to
 auto-stop once the last player leaves.
 
-The message shows the instance's friendly name, game/module, connection endpoints (domain and port),
-online player count, and current state.
+The embed's title and body are **fully author-controlled** via a template stored in Supabase, so you can
+include static details AMP doesn't expose (community server name, domain, password, house rules) alongside
+live values. The following placeholders are substituted on every update:
+
+| Placeholder   | Replaced with                                             |
+| ------------- | --------------------------------------------------------- |
+| `{status}`    | `Online` / `Offline` / a transitional label (`Starting`…) |
+| `{userCount}` | current online player count                               |
+| `{maxUsers}`  | maximum player slots (from AMP metrics)                   |
+| `{state}`     | raw AMP state label (`Ready`, `Stopped`, …)               |
 
 ### Step 1: Provide AMP credentials
 
@@ -269,6 +277,8 @@ Editor**, open the `amp_instance_status` table's `default` row and set:
 
 - `channel_id` — the Discord channel where the status message should be posted
 - `instance_id` — the AMP **InstanceID** (a GUID) of the instance to watch
+- `title` (optional) — embed title; defaults to the instance's friendly name if left blank
+- `description_template` (optional) — the embed body; the setup SQL seeds an example you can edit
 
 To find the InstanceID, open the instance in AMP and copy the GUID from its URL, or call
 `ADSModule/GetInstances` and read the `InstanceID` field.
