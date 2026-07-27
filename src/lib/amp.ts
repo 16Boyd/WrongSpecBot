@@ -54,6 +54,21 @@ function ampBaseUrl(): string {
     return url.replace(/\/+$/, '');
 }
 
+// Hostname players connect to, derived from AMP_URL (e.g. https://amp.example.com -> amp.example.com).
+// The panel host is the machine hosting the game servers; instance data only reports the bind
+// address (0.0.0.0), so it can't supply a usable domain. Returns '' if AMP_URL is unset/unparseable.
+export function ampHostname(): string {
+    const url = process.env.AMP_URL;
+    if (!url) {
+        return '';
+    }
+    try {
+        return new URL(url).hostname;
+    } catch {
+        return '';
+    }
+}
+
 // AMP is commonly served over HTTPS with a self-signed certificate, which Node rejects by
 // default. Setting AMP_INSECURE_TLS=true opts out of certificate verification for AMP calls
 // ONLY (this agent is never applied to Discord/Blizzard/Supabase requests).

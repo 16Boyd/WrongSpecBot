@@ -1,6 +1,6 @@
 import supabase from '../lib/supabase';
 import Logger from '../lib/logger';
-import { login, getAllInstances, getPlayerCount, appStateLabel, AmpInstance } from '../lib/amp';
+import { login, getAllInstances, getPlayerCount, appStateLabel, ampHostname, AmpInstance } from '../lib/amp';
 import { sendChannelMessage, editChannelMessage, deleteInteractionResponse, MessageBody } from '../lib/discord';
 import { buildAmpMessage, ampMessageSignature, DEFAULT_TEMPLATE, AMP_COLORS } from '../lib/ampMessage';
 
@@ -19,6 +19,9 @@ interface AmpStatusSettings {
     last_status: string | null;
     title: string | null;
     description_template: string | null;
+    // Port to show for {port}. Author-set per row, since games expose multiple ports and AMP
+    // doesn't tell us which one to display.
+    port: number | null;
 }
 
 interface InstanceSummary {
@@ -96,6 +99,8 @@ function buildMessage(instance: AmpInstance, settings: AmpStatusSettings): Messa
         userCount: players?.online ?? 0,
         maxUsers: players?.max ?? 0,
         state: appStateLabel(instance.AppState),
+        domain: ampHostname(),
+        port: settings.port != null ? String(settings.port) : '',
         // Green online, yellow transitioning, red offline.
         color: isReady ? AMP_COLORS.online : isTransitioning ? AMP_COLORS.pending : AMP_COLORS.offline,
         startButtonInstanceId: showStart ? instance.InstanceID : null
