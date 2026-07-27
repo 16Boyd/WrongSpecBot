@@ -8,6 +8,7 @@ A Discord bot for tracking World of Warcraft token prices with real-time notific
 - 🔔 Customizable price threshold notifications
 - 🌍 Multi-region support for the `/token` command (US, EU, KR, TW); automated alerts track one configurable region (`WATCH_REGION`, default US)
 - ⚡ Automatic price checking on a schedule (driven by a Cloudflare Worker cron)
+- 🖥️ Live AMP game-server instance status in Discord, with a one-click **Start Server** button
 - 📱 Discord slash commands
 - 🔒 Secure data storage with Supabase
 
@@ -144,6 +145,7 @@ npm start
 2. Go to **"SQL Editor"** in the left sidebar
 3. Copy the contents of `supabase-setup.sql` from this repository
 4. Paste into the SQL editor and click **"Run"**
+5. Repeat for `supabase-server-status.sql` (realm status) and `supabase-amp-status.sql` (AMP instance status) to create those tables
 
 ### Step 3: Get Project Credentials
 
@@ -196,6 +198,9 @@ CRON_SECRET=a_long_random_shared_secret
 AUTHORIZED_USERS=comma_separated_discord_user_ids
 DEFAULT_CHANNEL_ID=optional_fallback_channel_id
 WATCH_REGION=US
+AMP_URL=https://your-amp-panel:8080
+AMP_USERNAME=your_amp_username
+AMP_PASSWORD=your_amp_password
 ```
 
 ### Step 4: Deploy
@@ -207,16 +212,16 @@ WATCH_REGION=US
 ### Step 5: Scheduling
 
 Scheduling is handled by the Cloudflare Worker in `cloudflare-cron/` (see section 5), which calls
-the `/api/check-prices` and `/api/server-status` endpoints on a schedule with the shared `CRON_SECRET`
-bearer token. A native Vercel Cron Job is **not** used, because it would not send the bearer token these
-endpoints now require.
+the `/api/check-prices`, `/api/server-status`, and `/api/amp-status` endpoints on a schedule with the
+shared `CRON_SECRET` bearer token. A native Vercel Cron Job is **not** used, because it would not send the
+bearer token these endpoints now require.
 
 ---
 
 ## 5. Cloudflare Worker (Cron) Setup
 
-The scheduler lives in `cloudflare-cron/`. It triggers the price-check and server-status endpoints on a
-schedule and authenticates with the `CRON_SECRET` shared secret.
+The scheduler lives in `cloudflare-cron/`. It triggers the price-check, server-status, and AMP-status
+endpoints on a schedule and authenticates with the `CRON_SECRET` shared secret.
 
 ### Step 1: Configure
 
@@ -234,9 +239,56 @@ schedule and authenticates with the `CRON_SECRET` shared secret.
 1. `npm install`
 2. `npm run deploy` (runs `wrangler deploy`)
 
-The worker will now call `/api/check-prices` and `/api/server-status` on the configured schedule. Each
-request includes `Authorization: Bearer <CRON_SECRET>`; requests without a valid token are rejected with
-`401`.
+The worker will now call `/api/check-prices`, `/api/server-status`, and `/api/amp-status` on the
+configured schedule. Each request includes `Authorization: Bearer <CRON_SECRET>`; requests without a
+valid token are rejected with `401`.
+
+---
+
+## 5a. AMP Instance Status Setup
+
+This feature posts a live status message for one or more AMP (CubeCoders Application Management Panel)
+game-server instances and keeps them updated. Each instance is a separate row in the
+`amp_instance_status` table with its own channel, title, and template. When an instance is stopped, its
+message includes a green **Start Server** button that calls the AMP API to boot it — handy when the
+instance is configured to auto-stop once the last player leaves.
+
+The embed's title and body are **fully author-controlled** via a template stored in Supabase, so you can
+include static details AMP doesn't expose (community server name, domain, password, house rules) alongside
+live values. The following placeholders are substituted on every update:
+
+| Placeholder   | Replaced with                                             |
+| ------------- | --------------------------------------------------------- |
+| `{status}`    | `Online` / `Offline` / a transitional label (`Starting`…) |
+| `{userCount}` | current online player count                               |
+| `{maxUsers}`  | maximum player slots (from AMP metrics)                   |
+| `{state}`     | raw AMP state label (`Ready`, `Stopped`, …)               |
+
+### Step 1: Provide AMP credentials
+
+Set `AMP_URL`, `AMP_USERNAME`, and `AMP_PASSWORD` in Vercel (used by both the scheduled `/api/amp-status`
+endpoint and the button handler in `/api/interactions`). Use an AMP account with permission to view and
+start the instance. `AMP_URL` is the base panel URL, e.g. `https://amp.example.com` or `http://1.2.3.4:8080`
+(a self-signed HTTPS certificate must be trusted by the platform, otherwise use a valid cert).
+
+### Step 2: Configure instances in Supabase
+
+The feature is inactive until at least one instance is configured. **Add one row per instance** in the
+`amp_instance_status` table (the setup SQL includes an example `INSERT` you can duplicate). Each row has:
+
+- `instance_id` — the AMP **InstanceID** (a GUID) of the instance to watch (primary key)
+- `channel_id` — the Discord channel where this instance's status message should be posted
+- `title` (optional) — embed title; defaults to the instance's friendly name if left blank
+- `description_template` (optional) — the embed body; the setup SQL seeds an example you can edit
+
+To find the InstanceID, open the instance in AMP and copy the GUID from its URL, or call
+`ADSModule/GetInstances` and read the `InstanceID` field.
+
+Each run performs a single AMP login + `GetInstances` and then updates every configured row, so adding
+more instances doesn't multiply the AMP API calls. The worker posts each status message on its next run
+and edits it in place whenever that instance's status changes. Anyone in the channel can press **Start
+Server** — this is intentional, since the point is to let players bring an auto-stopped server back
+online.
 
 ---
 
@@ -270,6 +322,11 @@ WATCH_REGION=US
 
 # Optional: fallback channel ID used by the price checker if none is configured via /notify
 DEFAULT_CHANNEL_ID=your_channel_id_here
+
+# AMP (CubeCoders Application Management Panel) — required only for the AMP instance status feature
+AMP_URL=https://your-amp-panel:8080
+AMP_USERNAME=your_amp_username
+AMP_PASSWORD=your_amp_password
 ```
 
 **⚠️ Security Note**: Never commit your `.env` file to version control. It's already included in `.gitignore`.

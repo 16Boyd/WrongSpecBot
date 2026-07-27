@@ -2,6 +2,7 @@ import { verifyKey } from 'discord-interactions';
 import {
     APIInteraction,
     APIApplicationCommandInteraction,
+    APIMessageComponentInteraction,
     APIChatInputApplicationCommandInteractionData,
     InteractionType,
     InteractionResponseType
@@ -10,6 +11,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import axios from 'axios';
 import supabase from '../src/lib/supabase';
 import { getAccessToken, getTokenPriceInGold } from '../src/lib/blizzard';
+import { login as ampLogin, startInstance as ampStartInstance } from '../src/lib/amp';
 
 // Discord signs interactions over the exact raw request bytes. Disable Vercel's body
 // parser so we can verify the signature against those bytes instead of a re-serialized body.
@@ -175,6 +177,38 @@ async function handleNotify(interaction: APIApplicationCommandInteraction) {
     }
 }
 
+// Handle the "Start Server" button on an AMP status message. The custom_id carries the
+// target instance ID (`amp_start:<instanceId>`). Discord requires an ACK within ~3s, so the
+// caller ACKs with a deferred ephemeral response and this delivers the outcome via a follow-up.
+// The button is intentionally open to anyone in the channel: the instance auto-stops when empty,
+// so letting players start it themselves is the point.
+async function handleAmpStart(interaction: APIMessageComponentInteraction): Promise<void> {
+    const customId = interaction.data.custom_id;
+    const instanceId = customId.split(':')[1];
+
+    if (!instanceId) {
+        await editOriginalResponse(interaction.application_id, interaction.token, 'Could not determine which server to start.');
+        return;
+    }
+
+    try {
+        const sessionId = await ampLogin();
+        await ampStartInstance(sessionId, instanceId);
+        await editOriginalResponse(
+            interaction.application_id,
+            interaction.token,
+            '▶️ Start requested — the server is booting up. The status message will update shortly.'
+        );
+    } catch (error) {
+        console.error('Error starting AMP instance:', error instanceof Error ? error.message : error);
+        await editOriginalResponse(
+            interaction.application_id,
+            interaction.token,
+            'Sorry, I could not start the server. Please try again or check the AMP panel.'
+        );
+    }
+}
+
 // Export the handler for Vercel
 export default async function handler(
     req: VercelRequest,
@@ -202,6 +236,26 @@ export default async function handler(
 
     if (interaction.type === InteractionType.Ping) {
         res.status(200).json({ type: InteractionResponseType.Pong });
+        return;
+    }
+
+    if (interaction.type === InteractionType.MessageComponent) {
+        const customId = interaction.data.custom_id;
+
+        if (customId.startsWith('amp_start:')) {
+            // ACK immediately with a private "working" message, then deliver the result.
+            res.status(200).json({
+                type: InteractionResponseType.DeferredChannelMessageWithSource,
+                data: { flags: EPHEMERAL }
+            });
+            await handleAmpStart(interaction);
+            return;
+        }
+
+        res.status(200).json({
+            type: InteractionResponseType.ChannelMessageWithSource,
+            data: { content: 'Unknown interaction', flags: EPHEMERAL }
+        });
         return;
     }
 
