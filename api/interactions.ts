@@ -177,35 +177,47 @@ async function handleNotify(interaction: APIApplicationCommandInteraction) {
     }
 }
 
-// Handle the "Start Server" button on an AMP status message. The custom_id carries the
-// target instance ID (`amp_start:<instanceId>`). Discord requires an ACK within ~3s, so the
-// caller ACKs with a deferred ephemeral response and this delivers the outcome via a follow-up.
+// Handle the "Start Server" button on an AMP status message. The custom_id carries the target
+// instance ID (`amp_start:<instanceId>`).
+//
+// IMPORTANT: we do the AMP work BEFORE sending the interaction response. On Vercel the execution
+// context can be frozen the moment the response is flushed, so any awaited work AFTER res.json()
+// (e.g. a deferred ACK followed by a webhook edit) may never run — the login starts but
+// StartInstance never fires. Login + StartInstance are fast (well within Discord's ~3s ACK
+// window), so we start the instance first, then reply with the outcome in a single response.
+//
 // The button is intentionally open to anyone in the channel: the instance auto-stops when empty,
 // so letting players start it themselves is the point.
-async function handleAmpStart(interaction: APIMessageComponentInteraction): Promise<void> {
-    const customId = interaction.data.custom_id;
-    const instanceId = customId.split(':')[1];
+async function handleAmpStart(interaction: APIMessageComponentInteraction, res: VercelResponse): Promise<void> {
+    const instanceId = interaction.data.custom_id.split(':')[1];
 
     if (!instanceId) {
-        await editOriginalResponse(interaction.application_id, interaction.token, 'Could not determine which server to start.');
+        res.status(200).json({
+            type: InteractionResponseType.ChannelMessageWithSource,
+            data: { content: 'Could not determine which server to start.', flags: EPHEMERAL }
+        });
         return;
     }
 
     try {
         const sessionId = await ampLogin();
         await ampStartInstance(sessionId, instanceId);
-        await editOriginalResponse(
-            interaction.application_id,
-            interaction.token,
-            '▶️ Start requested — the server is booting up. The status message will update shortly.'
-        );
+        res.status(200).json({
+            type: InteractionResponseType.ChannelMessageWithSource,
+            data: {
+                content: '▶️ Start requested — the server is booting up. The status message will update shortly.',
+                flags: EPHEMERAL
+            }
+        });
     } catch (error) {
         console.error('Error starting AMP instance:', error instanceof Error ? error.message : error);
-        await editOriginalResponse(
-            interaction.application_id,
-            interaction.token,
-            'Sorry, I could not start the server. Please try again or check the AMP panel.'
-        );
+        res.status(200).json({
+            type: InteractionResponseType.ChannelMessageWithSource,
+            data: {
+                content: 'Sorry, I could not start the server. Please try again or check the AMP panel.',
+                flags: EPHEMERAL
+            }
+        });
     }
 }
 
@@ -243,12 +255,8 @@ export default async function handler(
         const customId = interaction.data.custom_id;
 
         if (customId.startsWith('amp_start:')) {
-            // ACK immediately with a private "working" message, then deliver the result.
-            res.status(200).json({
-                type: InteractionResponseType.DeferredChannelMessageWithSource,
-                data: { flags: EPHEMERAL }
-            });
-            await handleAmpStart(interaction);
+            // Do the AMP start, then respond (see handleAmpStart for why work precedes the reply).
+            await handleAmpStart(interaction, res);
             return;
         }
 
