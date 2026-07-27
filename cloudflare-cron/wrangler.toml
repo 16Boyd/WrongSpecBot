@@ -1,3 +1,4 @@
+# Deploying this worker requires Node.js >= 22 (wrangler v4). CI is pinned to Node 22.
 name = "wrongspecbot-cron"
 main = "src/worker.ts"
 compatibility_date = "2024-01-01"
