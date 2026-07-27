@@ -265,6 +265,13 @@ live values. The following placeholders are substituted on every update:
 | `{maxUsers}`  | maximum player slots (from AMP metrics)                   |
 | `{state}`     | raw AMP state label (`Ready`, `Stopped`, …)               |
 
+**Layout — side-by-side columns:** by default the whole template renders as one tall column. To make
+the message shorter, add a `{split}` marker where you want a column break. Discord stacks whole embeds
+vertically, so each chunk between `{split}` markers is rendered as an **inline embed field**, which
+Discord lays out in a row (up to 3 columns). One `{split}` gives you two columns side by side — e.g.
+connection info on the left, server stats and house rules on the right (see the example in
+`supabase-amp-status.sql`). Templates with no `{split}` are unchanged.
+
 ### Step 1: Provide AMP credentials
 
 Set `AMP_URL`, `AMP_USERNAME`, and `AMP_PASSWORD` in Vercel (used by both the scheduled `/api/amp-status`

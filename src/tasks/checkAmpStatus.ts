@@ -161,7 +161,12 @@ async function processInstance(
 
     // Log the exact data going into the message so the rendered output is fully visible.
     const players = getPlayerCount(instance);
-    const embed = (message.embeds?.[0] ?? {}) as { title?: string; description?: string; color?: number };
+    const embed = (message.embeds?.[0] ?? {}) as {
+        title?: string;
+        description?: string;
+        color?: number;
+        fields?: Array<{ value: string }>;
+    };
     logger.info(`Prepared message for ${instance.FriendlyName}`, {
         title: embed.title,
         status: statusWord(instance),
@@ -172,7 +177,9 @@ async function processInstance(
         color: embed.color,
         showStartButton: (message.components?.length ?? 0) > 0,
         templateSource: settings.description_template ? 'db' : 'default',
-        description: embed.description,
+        layout: embed.fields ? `${embed.fields.length} column(s)` : 'single',
+        // With columns the body lives in fields; otherwise in description.
+        body: embed.description ?? embed.fields?.map(f => f.value).join('\n---\n'),
         hasExistingMessage: !!settings.message_id,
         signatureChanged: signature !== settings.last_status
     });
