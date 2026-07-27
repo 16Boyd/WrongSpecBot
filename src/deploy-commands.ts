@@ -15,7 +15,8 @@ async function deployCommands(): Promise<void> {
     try {
         // Grab all the command files from the commands directory
         const commandsPath = join(__dirname, 'commands');
-        const commandFiles = (await readdir(commandsPath)).filter(file => file.endsWith('.ts'));
+        const commandFiles = (await readdir(commandsPath))
+            .filter(file => (file.endsWith('.ts') || file.endsWith('.js')) && !file.endsWith('.d.ts'));
 
         // Grab the SlashCommandBuilder#toJSON() output of each command's data for deployment
         for (const file of commandFiles) {

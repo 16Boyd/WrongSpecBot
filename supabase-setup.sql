@@ -15,7 +15,9 @@ CREATE TABLE IF NOT EXISTS notification_settings (
 -- Enable Row Level Security (optional but recommended)
 ALTER TABLE notification_settings ENABLE ROW LEVEL SECURITY;
 
--- Create a policy to allow all operations (adjust as needed for your security requirements)
+-- NOTE: This policy grants full read/write to anyone holding the anon key. It provides no
+-- real protection on its own -- it relies on SUPABASE_ANON_KEY being kept server-side only
+-- (it is never shipped to a client in this project). Tighten to service_role if that changes.
 CREATE POLICY "Allow all operations on notification_settings"
 ON notification_settings
 FOR ALL
