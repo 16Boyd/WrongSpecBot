@@ -1,13 +1,23 @@
 # WrongSpecBot
 
-A Discord bot for tracking World of Warcraft token prices with real-time notifications and alerts.
+A Discord bot for World of Warcraft token prices and live game-server status, with real-time
+notifications and alerts.
+
+## What it does
+
+WrongSpecBot runs as a set of **serverless endpoints on Vercel** that respond to Discord slash
+commands and button clicks. A **Cloudflare Worker** triggers the bot on a schedule (every minute
+by default) to check prices, realm status, and AMP game-server status, then posts or edits
+messages in Discord. State (alert thresholds, channel/message IDs, instance config) is stored in
+**Supabase**.
 
 ## Features
 
 - 📊 Real-time WoW Token price tracking
 - 🔔 Customizable price threshold notifications
 - 🌍 Multi-region support for the `/token` command (US, EU, KR, TW); automated alerts track one configurable region (`WATCH_REGION`, default US)
-- ⚡ Automatic price checking on a schedule (driven by a Cloudflare Worker cron)
+- 🖧 WoW realm up/down status monitoring, reported to a Discord channel
+- ⚡ Automatic price/status checking on a schedule (driven by a Cloudflare Worker cron)
 - 🖥️ Live AMP game-server instance status in Discord, with a one-click **Start Server** button
 - 📱 Discord slash commands
 - 🔒 Secure data storage with Supabase
@@ -46,6 +56,70 @@ npm run dev
 # Production mode
 npm start
 ```
+
+---
+
+# 🚀 Run Your Own Instance (Fork Guide)
+
+WrongSpecBot is open source, and it's built to be self-hosted. Because all state lives in **your**
+Supabase project and all secrets live in **your** Vercel project, forking the repo gives you a fully
+independent bot — your own Discord application, your own price alerts, and (optionally) your own AMP
+game server. You don't need to touch the original project at all.
+
+Here's the high-level path; each step links to the detailed section below.
+
+1. **Fork the repository on GitHub.** Click **Fork** at the top of
+   [github.com/jasonb194/WrongSpecBot](https://github.com/jasonb194/WrongSpecBot). This creates a copy
+   under your own account that you can deploy and modify freely.
+
+2. **Create your own Discord application and bot.** Follow [Discord Bot Setup](#1-discord-bot-setup)
+   to get a `DISCORD_TOKEN`, `CLIENT_ID`, and `DISCORD_PUBLIC_KEY`, and to invite the bot to your
+   server. This must be *your* application — you can't reuse someone else's bot token.
+
+3. **Get Blizzard API credentials.** Follow [Blizzard API Setup](#2-blizzard-api-setup) for
+   `BLIZZARD_CLIENT_ID` and `BLIZZARD_CLIENT_SECRET` (needed for token prices and realm status).
+
+4. **Create your own Supabase project and run the SQL.** Follow [Supabase Setup](#3-supabase-setup).
+   Run `supabase-setup.sql`, `supabase-server-status.sql`, and `supabase-amp-status.sql` to create all
+   the tables. Copy your `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
+
+5. **Deploy your fork to Vercel.** Follow [Vercel Deployment](#4-vercel-deployment): import **your
+   forked repo** (not the original), add all the environment variables, and deploy. Your bot's public
+   URL will be `https://<your-project>.vercel.app`.
+
+6. **Point Discord at your deployment.** In the Discord Developer Portal, set the application's
+   **Interactions Endpoint URL** to `https://<your-project>.vercel.app/api/interactions`. Discord
+   sends a verification ping when you save; it must succeed, which requires `DISCORD_PUBLIC_KEY` to be
+   set correctly in Vercel.
+
+7. **Register the slash commands.** From a local clone of your fork with the same env vars in a `.env`
+   file, run `npm install` then `npm run deploy`. This registers `/token`, `/notify`, and `/ping`
+   with Discord.
+
+8. **Set up the scheduler.** Follow [Cloudflare Worker Setup](#5-cloudflare-worker-cron-setup). Set
+   `VERCEL_BASE_URL` to your Vercel URL and use the **same** `CRON_SECRET` in both Cloudflare and
+   Vercel, then deploy the worker. This is what drives the automated price/status checks.
+
+9. **(Optional) Enable AMP game-server status.** If you run a [CubeCoders AMP](https://cubecoders.com/AMP)
+   panel, follow [AMP Instance Status Setup](#5a-amp-instance-status-setup) to add credentials and
+   configure instances. Skip this entirely if you don't — the rest of the bot works without it.
+
+### Notes for self-hosters
+
+- **Everything is yours.** Your fork reads and writes only your Supabase project and uses only your
+  secrets. There is no shared backend with the original bot.
+- **Keep secrets in Vercel, not in the repo.** Never commit a `.env` file. All secrets are configured
+  as environment variables in your Vercel project (and in Cloudflare for the worker). `.env` is already
+  in `.gitignore`.
+- **Pulling in updates.** To get future improvements, add the original as a remote and merge:
+  ```bash
+  git remote add upstream https://github.com/jasonb194/WrongSpecBot.git
+  git fetch upstream
+  git merge upstream/main
+  ```
+  Re-run any new SQL migrations in your Supabase project after merging.
+- **Costs.** Vercel, Supabase, and Cloudflare Workers all have free tiers that comfortably cover a
+  personal bot. Blizzard's API is free for this usage.
 
 ---
 
@@ -418,9 +492,9 @@ AMP_INSECURE_TLS=true
 - **Runtime**: Node.js
 - **Bot Framework**: Discord.js v14
 - **Database**: Supabase (PostgreSQL)
-- **Hosting**: Vercel
-- **Monitoring**: UptimeRobot
-- **APIs**: Blizzard Battle.net API
+- **Hosting**: Vercel (serverless functions)
+- **Scheduler**: Cloudflare Worker cron
+- **APIs**: Blizzard Battle.net API, CubeCoders AMP API
 
 ## 📄 License
 
