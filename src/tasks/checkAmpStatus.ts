@@ -139,9 +139,17 @@ async function processInstance(
     }
 
     if (!instance) {
-        logger.warn(`AMP instance ${settings.instance_id} not found`);
+        logger.warn(`AMP instance ${settings.instance_id} not found in GetInstances output (check the GUID)`);
         return { instanceId: settings.instance_id, error: 'instance not found' };
     }
+
+    logger.info(`Matched instance ${settings.instance_id}`, {
+        friendlyName: instance.FriendlyName,
+        running: instance.Running,
+        appState: instance.AppState,
+        playerMetricPresent: !!instance.Metrics?.['Active Users'],
+        metricKeys: Object.keys(instance.Metrics ?? {})
+    });
 
     const message = buildMessage(instance, settings);
     const signature = messageSignature(message);
@@ -190,6 +198,10 @@ export async function checkAmpStatus(): Promise<CheckAmpStatusResult> {
             await logger.flush();
             return { success: true, timestamp: new Date().toISOString() };
         }
+
+        logger.info(`Found ${rows.length} configured AMP instance row(s)`, {
+            instanceIds: rows.map(r => r.instance_id)
+        });
 
         // One login + one GetInstances covers every configured row.
         const sessionId = await login();
