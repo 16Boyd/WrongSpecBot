@@ -78,6 +78,9 @@ interface CheckPricesResult {
     error?: string;
 }
 
+// The worker fires every minute, but we only refresh the live price message at most this often.
+const UPDATE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
 function defaultSettings(): NotificationSettings {
     return {
         channelId: process.env.DEFAULT_CHANNEL_ID || '',
@@ -254,12 +257,21 @@ async function checkPrices(): Promise<CheckPricesResult> {
                 );
             }
         } else if (settings.messageId) {
-            // A live message already exists. Only edit it when the price actually moved, to
-            // avoid rewriting the message on every cron tick.
+            // A live message already exists. Only edit it when something changed AND at least
+            // UPDATE_INTERVAL_MS has passed since the last edit, so the message refreshes at most
+            // once every 5 minutes even though the worker runs every minute.
             const priceChanged = settings.currentPrice === null || price !== settings.currentPrice;
+            const statusChanged = newAction !== settings.lastAction;
+            const msSinceLastUpdate = settings.lastNotified === null ? Infinity : Date.now() - settings.lastNotified;
+            const throttled = msSinceLastUpdate < UPDATE_INTERVAL_MS;
 
-            if (!priceChanged && newAction === settings.lastAction) {
+            if (!priceChanged && !statusChanged) {
                 logger.info('Price unchanged since last check, no update needed');
+            } else if (throttled) {
+                // Leave current_price/last_notified untouched so the pending change is still
+                // reflected on the next tick that clears the 5-minute window.
+                const waitSeconds = Math.ceil((UPDATE_INTERVAL_MS - msSinceLastUpdate) / 1000);
+                logger.info(`Update throttled - ${waitSeconds}s until the message may be refreshed again`);
             } else {
                 const status = zone === 'SELL' ? 'SELL ZONE' : zone === 'BUY' ? 'HOLD ZONE' : 'MONITORING';
                 const message = `📊 **Token Price Update**\nRegion: ${region}\nCurrent Price: ${price.toLocaleString()} gold\nStatus: **${status}**\nSell Threshold: ${settings.sellThreshold.toLocaleString()} gold\nHold Threshold: ${settings.holdThreshold.toLocaleString()} gold\n\n*Last updated: ${new Date().toLocaleString()}*`;
@@ -267,7 +279,7 @@ async function checkPrices(): Promise<CheckPricesResult> {
                 logger.info('Updating existing message');
                 const success = await editMessage(settings.channelId, settings.messageId, message, logger);
                 if (success) {
-                    await updateNotificationState({ last_action: newAction, current_price: price }, logger);
+                    await updateNotificationState({ last_action: newAction, last_notified: new Date().toISOString(), current_price: price }, logger);
                 } else {
                     logger.warn('Failed to edit existing message - clearing stale message ID');
                     await updateNotificationState({ message_id: null, current_price: price }, logger);
