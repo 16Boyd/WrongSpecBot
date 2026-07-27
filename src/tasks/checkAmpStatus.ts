@@ -155,6 +155,25 @@ async function processInstance(
 
     const message = buildMessage(instance, settings);
     const signature = messageSignature(message);
+
+    // Log the exact data going into the message so the rendered output is fully visible.
+    const players = getPlayerCount(instance);
+    const embed = (message.embeds?.[0] ?? {}) as { title?: string; description?: string; color?: number };
+    logger.info(`Prepared message for ${instance.FriendlyName}`, {
+        title: embed.title,
+        status: statusWord(instance),
+        userCount: players?.online ?? 0,
+        maxUsers: players?.max ?? 0,
+        rawActiveUsers: instance.Metrics?.['Active Users'],
+        endpoints: instance.ApplicationEndpoints,
+        color: embed.color,
+        showStartButton: (message.components?.length ?? 0) > 0,
+        templateSource: settings.description_template ? 'db' : 'default',
+        description: embed.description,
+        hasExistingMessage: !!settings.message_id,
+        signatureChanged: signature !== settings.last_status
+    });
+
     let updated = false;
 
     if (!settings.message_id) {
