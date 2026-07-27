@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "packageManager": "pnpm@8.15.0",
   "engines": {
-    "node": "20.x"
+    "node": "22.x"
   },
   "scripts": {
     "build": "tsc",
@@ -34,7 +34,7 @@
     "dotenv": "^16.3.1"
   },
   "devDependencies": {
-    "@types/node": "^20.11.24",
+    "@types/node": "^22.0.0",
     "@vercel/node": "^5.3.6",
     "discord-api-types": "^0.38.16",
     "nodemon": "^3.0.1",
