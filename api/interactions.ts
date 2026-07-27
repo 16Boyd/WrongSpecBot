@@ -11,7 +11,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import axios from 'axios';
 import supabase from '../src/lib/supabase';
 import { getAccessToken, getTokenPriceInGold } from '../src/lib/blizzard';
-import { login as ampLogin, startInstance as ampStartInstance } from '../src/lib/amp';
+import { login as ampLogin, startInstance as ampStartInstance, startApplication as ampStartApplication } from '../src/lib/amp';
 
 // Discord signs interactions over the exact raw request bytes. Disable Vercel's body
 // parser so we can verify the signature against those bytes instead of a re-serialized body.
@@ -201,7 +201,11 @@ async function handleAmpStart(interaction: APIMessageComponentInteraction, res: 
 
     try {
         const sessionId = await ampLogin();
+        // Ensure the instance daemon is up, then start the game application inside it. For an
+        // already-running daemon (the common case) StartInstance is a no-op and Core/Start does
+        // the real work of booting the game server.
         await ampStartInstance(sessionId, instanceId);
+        await ampStartApplication(sessionId, instanceId);
         res.status(200).json({
             type: InteractionResponseType.ChannelMessageWithSource,
             data: {
