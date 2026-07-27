@@ -210,11 +210,20 @@ interface ActionResultResponse {
 // so a successful call means "start was accepted", not "server is up".
 export async function startInstance(sessionId: string, instanceId: string): Promise<void> {
     console.info(`AMP StartInstance requested for ${instanceId}`);
+    // AMP's ADSModule.StartInstance parameter is `InstanceName` and it accepts the InstanceID GUID
+    // as the value. We send both InstanceName and InstanceId to stay robust across AMP versions;
+    // AMP ignores unrecognised keys (an unknown key returns 200 but starts nothing).
     const data = await ampCall<ActionResultResponse>('ADSModule/StartInstance', {
+        InstanceName: instanceId,
         InstanceId: instanceId,
         SESSIONID: sessionId
     });
-    console.info('AMP StartInstance result', { instanceId, status: data?.Status, reason: data?.Reason });
+    console.info('AMP StartInstance result', {
+        instanceId,
+        status: data?.Status,
+        reason: data?.Reason,
+        raw: snippet(data)
+    });
 
     // StartInstance returns an ActionResult; a false Status signals a rejected request.
     if (data && data.Status === false) {
