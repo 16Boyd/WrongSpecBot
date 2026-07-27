@@ -182,11 +182,9 @@ async function handleNotify(interaction: APIApplicationCommandInteraction) {
 // Handle the "Start Server" button on an AMP status message. The custom_id carries the target
 // instance ID (`amp_start:<instanceId>`).
 //
-// IMPORTANT: we do the AMP work BEFORE sending the interaction response. On Vercel the execution
-// context can be frozen the moment the response is flushed, so any awaited work AFTER res.json()
-// (e.g. a deferred ACK followed by a webhook edit) may never run — the login starts but
-// StartInstance never fires. Login + StartInstance are fast (well within Discord's ~3s ACK
-// window), so we start the instance first, then reply with the outcome in a single response.
+// The AMP start chain (controller login + StartInstance + instance login + Core/Start) commonly
+// exceeds Discord's ~3s interaction window, so handleAmpStart defers the response first, then runs
+// the work and edits the reply — see the detailed note there.
 //
 // The button is intentionally open to anyone in the channel: the instance auto-stops when empty,
 // so letting players start it themselves is the point.
@@ -251,6 +249,17 @@ async function scheduleEphemeralCleanup(applicationId: string, interactionToken:
 }
 
 async function handleAmpStart(interaction: APIMessageComponentInteraction, res: VercelResponse): Promise<void> {
+    // Acknowledge the click IMMEDIATELY with a deferred (ephemeral) response. The AMP work below —
+    // a controller login, StartInstance, a second instance-scoped login, and Core/Start — regularly
+    // takes longer than Discord's ~3s interaction window, which is what produced the "Did not
+    // respond in time" errors. Deferring ACKs in milliseconds; we then do the work and edit this
+    // reply with the outcome. The serverless function stays alive until this handler's promise
+    // resolves, so the awaited work still runs (the same pattern /token uses successfully here).
+    res.status(200).json({
+        type: InteractionResponseType.DeferredChannelMessageWithSource,
+        data: { flags: EPHEMERAL }
+    });
+
     const instanceId = interaction.data.custom_id.split(':')[1];
 
     let content: string;
@@ -273,13 +282,13 @@ async function handleAmpStart(interaction: APIMessageComponentInteraction, res: 
         }
     }
 
-    // Schedule this ephemeral confirmation to auto-dismiss after a few minutes.
+    // Deliver the outcome by editing the deferred reply, then schedule its auto-dismiss.
+    try {
+        await editOriginalResponse(interaction.application_id, interaction.token, content);
+    } catch (error) {
+        console.error('Failed to edit deferred start response:', error instanceof Error ? error.message : error);
+    }
     await scheduleEphemeralCleanup(interaction.application_id, interaction.token);
-
-    res.status(200).json({
-        type: InteractionResponseType.ChannelMessageWithSource,
-        data: { content, flags: EPHEMERAL }
-    });
 }
 
 // Export the handler for Vercel
@@ -316,7 +325,7 @@ export default async function handler(
         const customId = interaction.data.custom_id;
 
         if (customId.startsWith('amp_start:')) {
-            // Do the AMP start, then respond (see handleAmpStart for why work precedes the reply).
+            // Defers immediately, then runs the AMP start and edits the reply (see handleAmpStart).
             await handleAmpStart(interaction, res);
             return;
         }
