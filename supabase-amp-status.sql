@@ -12,6 +12,10 @@ CREATE TABLE IF NOT EXISTS amp_instance_status (
     start_requested_at TIMESTAMP WITH TIME ZONE,  -- Set when Start Server is pressed. Grace window:
                                     --   while recent and the app is still offline, the cron keeps the
                                     --   "Start Requested" message instead of reverting to Offline.
+    start_pending BOOLEAN DEFAULT FALSE,  -- Set true when Start Server is pressed; cleared once a
+                                    --   start has been performed. If the button's background start
+                                    --   attempt was frozen by the serverless runtime, the cron sees
+                                    --   this flag and performs the start itself (guaranteed fallback).
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -19,6 +23,7 @@ CREATE TABLE IF NOT EXISTS amp_instance_status (
 -- For existing installs created before these columns were added (safe to run repeatedly).
 ALTER TABLE amp_instance_status ADD COLUMN IF NOT EXISTS port INTEGER;
 ALTER TABLE amp_instance_status ADD COLUMN IF NOT EXISTS start_requested_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE amp_instance_status ADD COLUMN IF NOT EXISTS start_pending BOOLEAN DEFAULT FALSE;
 
 -- Enable Row Level Security
 ALTER TABLE amp_instance_status ENABLE ROW LEVEL SECURITY;

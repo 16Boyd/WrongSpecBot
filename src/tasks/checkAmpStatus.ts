@@ -1,6 +1,6 @@
 import supabase from '../lib/supabase';
 import Logger from '../lib/logger';
-import { login, getAllInstances, getPlayerCount, appStateLabel, ampHostname, AmpInstance } from '../lib/amp';
+import { login, getAllInstances, getPlayerCount, appStateLabel, ampHostname, startServer, AmpInstance } from '../lib/amp';
 import { sendChannelMessage, editChannelMessage, deleteInteractionResponse, MessageBody } from '../lib/discord';
 import { buildAmpMessage, ampMessageSignature, DEFAULT_TEMPLATE, AMP_COLORS } from '../lib/ampMessage';
 
@@ -26,6 +26,10 @@ interface AmpStatusSettings {
     // START_REQUEST_GRACE_MS) and the app is still offline, the cron leaves the "Start Requested"
     // message in place instead of flipping it back to Offline mid-boot.
     start_requested_at: string | null;
+    // True from the moment Start Server is pressed until a start has actually been performed. The
+    // button attempts the start immediately in the background; if the serverless runtime froze that
+    // attempt, this flag tells the cron to perform the start itself (guaranteed fallback).
+    start_pending: boolean | null;
 }
 
 interface InstanceSummary {
@@ -174,10 +178,37 @@ async function processInstance(
     // Offline = not ready and not mid-transition (Stopped/Failed/etc.).
     const isOffline = instance.AppState !== READY_STATE && !TRANSITIONAL_STATES.includes(instance.AppState);
 
+    // Fallback start: a user pressed Start Server (start_pending) but the server is still offline —
+    // typically because the button's background start attempt was frozen by the serverless runtime.
+    // Perform the start here so it always happens even if that attempt never ran. Idempotent: if the
+    // start already succeeded the app wouldn't be offline, and re-starting an already-running server
+    // is a no-op in AMP.
+    let startRequestedAt = settings.start_requested_at;
+    if (settings.start_pending) {
+        if (isOffline) {
+            try {
+                logger.info(`start_pending set and ${instance.FriendlyName} still offline — performing fallback start`);
+                await startServer(settings.instance_id);
+                // Re-open the grace window from now so the message stays "Start Requested" while the
+                // freshly-kicked server boots, and clear the pending flag.
+                const now = new Date().toISOString();
+                await updateSettings(settings.instance_id, { start_pending: false, start_requested_at: now }, logger);
+                startRequestedAt = now;
+            } catch (error) {
+                // Clear the flag so we don't hammer AMP every minute; the user can press Start again.
+                logger.error(`Fallback start failed for ${settings.instance_id}`, errorToLogMetadata(error));
+                await updateSettings(settings.instance_id, { start_pending: false }, logger);
+            }
+        } else {
+            // Server already came up (or is transitioning) — the start took effect; just clear the flag.
+            await updateSettings(settings.instance_id, { start_pending: false }, logger);
+        }
+    }
+
     // If a start was requested recently and the server is still offline (hasn't begun booting
     // yet), leave the "Start Requested" message untouched until the grace window elapses.
-    if (isOffline && settings.start_requested_at) {
-        const elapsedMs = Date.now() - Date.parse(settings.start_requested_at);
+    if (isOffline && startRequestedAt) {
+        const elapsedMs = Date.now() - Date.parse(startRequestedAt);
         if (Number.isFinite(elapsedMs) && elapsedMs >= 0 && elapsedMs < START_REQUEST_GRACE_MS) {
             logger.info(
                 `Start requested ${Math.round(elapsedMs / 1000)}s ago for ${instance.FriendlyName} and still offline ` +
@@ -226,7 +257,7 @@ async function processInstance(
     if (!settings.message_id) {
         // No live message yet: post a fresh one.
         const messageId = await sendChannelMessage(settings.channel_id, message);
-        await updateSettings(settings.instance_id, { message_id: messageId, last_status: signature, start_requested_at: null }, logger);
+        await updateSettings(settings.instance_id, { message_id: messageId, last_status: signature, start_requested_at: null, start_pending: false }, logger);
         updated = true;
         logger.info(`Posted new AMP status message for ${instance.FriendlyName}: ${messageId}`);
     } else if (signature !== settings.last_status) {
@@ -234,7 +265,7 @@ async function processInstance(
         // Clearing start_requested_at retires the grace window now that we're showing real state.
         try {
             await editChannelMessage(settings.channel_id, settings.message_id, message);
-            await updateSettings(settings.instance_id, { last_status: signature, start_requested_at: null }, logger);
+            await updateSettings(settings.instance_id, { last_status: signature, start_requested_at: null, start_pending: false }, logger);
             updated = true;
             logger.info(`Edited AMP status message for ${instance.FriendlyName}: ${settings.message_id}`);
         } catch (error) {
