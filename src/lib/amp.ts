@@ -113,10 +113,15 @@ function flattenInstances(payload: unknown): AmpInstance[] {
     });
 }
 
+// Fetch every instance visible to the account across all ADS targets.
+export async function getAllInstances(sessionId: string): Promise<AmpInstance[]> {
+    const payload = await ampCall<unknown>('ADSModule/GetInstances', { SESSIONID: sessionId });
+    return flattenInstances(payload);
+}
+
 // Fetch a single instance by its AMP InstanceID, or null if it is not found.
 export async function getInstance(sessionId: string, instanceId: string): Promise<AmpInstance | null> {
-    const payload = await ampCall<unknown>('ADSModule/GetInstances', { SESSIONID: sessionId });
-    const instances = flattenInstances(payload);
+    const instances = await getAllInstances(sessionId);
     return instances.find(inst => inst.InstanceID === instanceId) ?? null;
 }
 

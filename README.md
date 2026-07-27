@@ -247,10 +247,11 @@ valid token are rejected with `401`.
 
 ## 5a. AMP Instance Status Setup
 
-This feature posts a live status message for a single AMP (CubeCoders Application Management Panel)
-game-server instance and keeps it updated. When the instance is stopped, the message includes a green
-**Start Server** button that calls the AMP API to boot it — handy when the instance is configured to
-auto-stop once the last player leaves.
+This feature posts a live status message for one or more AMP (CubeCoders Application Management Panel)
+game-server instances and keeps them updated. Each instance is a separate row in the
+`amp_instance_status` table with its own channel, title, and template. When an instance is stopped, its
+message includes a green **Start Server** button that calls the AMP API to boot it — handy when the
+instance is configured to auto-stop once the last player leaves.
 
 The embed's title and body are **fully author-controlled** via a template stored in Supabase, so you can
 include static details AMP doesn't expose (community server name, domain, password, house rules) alongside
@@ -270,22 +271,24 @@ endpoint and the button handler in `/api/interactions`). Use an AMP account with
 start the instance. `AMP_URL` is the base panel URL, e.g. `https://amp.example.com` or `http://1.2.3.4:8080`
 (a self-signed HTTPS certificate must be trusted by the platform, otherwise use a valid cert).
 
-### Step 2: Configure the instance in Supabase
+### Step 2: Configure instances in Supabase
 
-The feature is inactive until both a channel and an instance are configured. In the Supabase **Table
-Editor**, open the `amp_instance_status` table's `default` row and set:
+The feature is inactive until at least one instance is configured. **Add one row per instance** in the
+`amp_instance_status` table (the setup SQL includes an example `INSERT` you can duplicate). Each row has:
 
-- `channel_id` — the Discord channel where the status message should be posted
-- `instance_id` — the AMP **InstanceID** (a GUID) of the instance to watch
+- `instance_id` — the AMP **InstanceID** (a GUID) of the instance to watch (primary key)
+- `channel_id` — the Discord channel where this instance's status message should be posted
 - `title` (optional) — embed title; defaults to the instance's friendly name if left blank
 - `description_template` (optional) — the embed body; the setup SQL seeds an example you can edit
 
 To find the InstanceID, open the instance in AMP and copy the GUID from its URL, or call
 `ADSModule/GetInstances` and read the `InstanceID` field.
 
-The worker will post the status message on its next run and edit it in place whenever the status changes.
-Anyone in the channel can press **Start Server** — this is intentional, since the point is to let players
-bring an auto-stopped server back online.
+Each run performs a single AMP login + `GetInstances` and then updates every configured row, so adding
+more instances doesn't multiply the AMP API calls. The worker posts each status message on its next run
+and edits it in place whenever that instance's status changes. Anyone in the channel can press **Start
+Server** — this is intentional, since the point is to let players bring an auto-stopped server back
+online.
 
 ---
 
