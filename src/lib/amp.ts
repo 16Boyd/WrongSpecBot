@@ -231,6 +231,29 @@ export async function startInstance(sessionId: string, instanceId: string): Prom
     }
 }
 
+// Start the game APPLICATION inside an instance — distinct from the instance's AMP daemon.
+// An instance's daemon can be Running:true while its application AppState is 0 (Stopped) — the
+// "paused when empty" state. Starting the app calls the instance's own Core/Start, proxied through
+// the controller at /API/ADSModule/Servers/<InstanceID>/API/Core/Start using the controller session.
+export async function startApplication(sessionId: string, instanceId: string): Promise<void> {
+    console.info(`AMP Core/Start (application) requested for ${instanceId}`);
+    const data = await ampCall<ActionResultResponse>(
+        `ADSModule/Servers/${instanceId}/API/Core/Start`,
+        { SESSIONID: sessionId }
+    );
+    console.info('AMP Core/Start result', {
+        instanceId,
+        status: data?.Status,
+        reason: data?.Reason,
+        raw: snippet(data)
+    });
+
+    // Core/Start may return void or an ActionResult; only an explicit false Status is a failure.
+    if (data && data.Status === false) {
+        throw new Error(`AMP Core/Start failed${data.Reason ? `: ${data.Reason}` : ''}`);
+    }
+}
+
 // Convenience: extract the online/max player count from an instance's metrics.
 export function getPlayerCount(instance: AmpInstance): { online: number; max: number } | null {
     const metric = instance.Metrics?.['Active Users'];
