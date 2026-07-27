@@ -14,6 +14,8 @@ function rest(): REST {
 export interface MessageBody {
     content?: string;
     embeds?: unknown[];
+    // Raw Discord message components (action rows / buttons). Pass [] to clear existing components.
+    components?: unknown[];
 }
 
 // Send a message to a channel and return the new message ID.
