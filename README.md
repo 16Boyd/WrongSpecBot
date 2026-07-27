@@ -338,6 +338,16 @@ live values. The following placeholders are substituted on every update:
 | `{userCount}` | current online player count                               |
 | `{maxUsers}`  | maximum player slots (from AMP metrics)                   |
 | `{state}`     | raw AMP state label (`Ready`, `Stopped`, …)               |
+| `{domain}`    | the host from `AMP_URL` (e.g. `amp.example.com`)          |
+| `{port}`      | the row's `port` value (see note below)                   |
+
+**About `{domain}` and `{port}`:** AMP's instance data only reports the server's *bind* address
+(usually `0.0.0.0`), not a public domain, and games commonly expose several ports (game, query, RCON,
+REST…) with no reliable way to know which one players should use. So `{domain}` is derived from the
+`AMP_URL` host (the panel and game servers share a host in the typical single-box setup), and `{port}`
+is read from a per-row **`port`** column you set to the one port worth showing. Leave `port` null and
+`{port}` renders empty; if a game needs several ports shown, list the extras as literal text in the
+template.
 
 **Layout — side-by-side columns:** by default the whole template renders as one tall column. To make
 the message shorter, add a `{split}` marker where you want a column break. Discord stacks whole embeds
@@ -365,6 +375,7 @@ The feature is inactive until at least one instance is configured. **Add one row
 - `instance_id` — the AMP **InstanceID** (a GUID) of the instance to watch (primary key)
 - `channel_id` — the Discord channel where this instance's status message should be posted
 - `title` (optional) — embed title; defaults to the instance's friendly name if left blank
+- `port` (optional) — the port shown by `{port}`; leave null if you don't use `{port}`
 - `description_template` (optional) — the embed body; the setup SQL seeds an example you can edit
 
 To find the InstanceID, open the instance in AMP and copy the GUID from its URL, or call

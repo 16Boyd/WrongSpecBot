@@ -11,7 +11,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import axios from 'axios';
 import supabase from '../src/lib/supabase';
 import { getAccessToken, getTokenPriceInGold } from '../src/lib/blizzard';
-import { login as ampLogin, startInstance as ampStartInstance, startApplication as ampStartApplication } from '../src/lib/amp';
+import { login as ampLogin, startInstance as ampStartInstance, startApplication as ampStartApplication, ampHostname } from '../src/lib/amp';
 import { editChannelMessage } from '../src/lib/discord';
 import { buildAmpMessage, ampMessageSignature, DEFAULT_TEMPLATE, AMP_COLORS } from '../src/lib/ampMessage';
 
@@ -213,6 +213,8 @@ async function markStartRequested(instanceId: string): Promise<void> {
             userCount: 0,
             maxUsers: 0,
             state: 'Start Requested',
+            domain: ampHostname(),
+            port: data.port != null ? String(data.port) : '',
             color: AMP_COLORS.pending,
             startButtonInstanceId: null // hide the button while a start is pending
         });

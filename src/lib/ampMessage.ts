@@ -34,6 +34,8 @@ export interface AmpMessageParams {
     userCount: number;  // {userCount}
     maxUsers: number;   // {maxUsers}
     state: string;      // {state}
+    domain: string;     // {domain}  (derived from AMP_URL host)
+    port: string;       // {port}    (per-row value from the amp_instance_status table)
     color: number;
     // When set, render a green "Start Server" button targeting this instance; otherwise no button.
     startButtonInstanceId: string | null;
@@ -42,13 +44,15 @@ export interface AmpMessageParams {
 // Substitute the supported placeholders in a description template.
 export function renderTemplate(
     template: string,
-    v: { status: string; userCount: number; maxUsers: number; state: string }
+    v: { status: string; userCount: number; maxUsers: number; state: string; domain: string; port: string }
 ): string {
     return template
         .replace(/\{status\}/g, v.status)
         .replace(/\{userCount\}/g, String(v.userCount))
         .replace(/\{maxUsers\}/g, String(v.maxUsers))
-        .replace(/\{state\}/g, v.state);
+        .replace(/\{state\}/g, v.state)
+        .replace(/\{domain\}/g, v.domain)
+        .replace(/\{port\}/g, v.port);
 }
 
 export function buildAmpMessage(p: AmpMessageParams): MessageBody {
