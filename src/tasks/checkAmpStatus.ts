@@ -42,9 +42,14 @@ export interface CheckAmpStatusResult {
     timestamp: string;
     instances?: InstanceSummary[];
     // Every instance AMP reports (regardless of configuration) — a setup aid for finding InstanceIDs.
-    availableInstances?: Array<{ instanceId: string; name: string; module: string; running: boolean }>;
+    availableInstances?: Array<{ instanceId: string; name: string; module: string; running: boolean; state: string }>;
     error?: string;
 }
+
+// AMP AppState for a fully running/ready application. NOTE: we key on AppState, not the
+// instance's `Running` flag — for GenericModule instances AMP reports Running:true even when
+// the game server's AppState is 0 (Stopped), so `Running` is not a reliable up/down signal.
+const READY_STATE = 20;
 
 // AppStates where the instance is mid-transition; we hide the Start button so a user
 // can't fire a redundant start while one is already in flight.
@@ -74,9 +79,13 @@ async function updateSettings(instanceId: string, fields: Partial<AmpStatusSetti
     }
 }
 
-// A human-readable status word for the {status} placeholder.
+// A human-readable status word for the {status} placeholder. A running server with no players
+// connected reads as "Idle" (up, but empty — e.g. before it auto-stops); with players, "Online".
 function statusWord(instance: AmpInstance): string {
-    if (instance.Running) return 'Online';
+    if (instance.AppState === READY_STATE) {
+        const players = getPlayerCount(instance);
+        return players && players.online > 0 ? 'Online' : 'Idle';
+    }
     if (TRANSITIONAL_STATES.includes(instance.AppState)) return appStateLabel(instance.AppState);
     return 'Offline';
 }
@@ -96,12 +105,18 @@ function renderDescription(template: string, instance: AmpInstance): string {
 }
 
 function buildMessage(instance: AmpInstance, settings: AmpStatusSettings): MessageBody {
-    const running = instance.Running;
+    const isReady = instance.AppState === READY_STATE;
     const isTransitioning = TRANSITIONAL_STATES.includes(instance.AppState);
-    const showStart = !running && !isTransitioning;
+    // Show the Start button whenever the app is stopped/failed/etc. — anything that isn't Ready
+    // and isn't already mid-transition.
+    const showStart = !isReady && !isTransitioning;
+    const players = getPlayerCount(instance);
+    const idle = isReady && !(players && players.online > 0);
 
-    // Colour the embed bar by status for at-a-glance readability (green/yellow/red).
-    const color = running ? 0x00ff00 : isTransitioning ? 0xffcc00 : 0xff0000;
+    // Colour the embed bar by status: green online, yellow idle/transitioning, red offline.
+    const color = isReady
+        ? (idle ? 0xffcc00 : 0x00ff00)
+        : (isTransitioning ? 0xffcc00 : 0xff0000);
     const title = settings.title || instance.FriendlyName || instance.Module || 'Server Status';
     const description = renderDescription(settings.description_template || DEFAULT_TEMPLATE, instance);
 
@@ -201,7 +216,7 @@ async function processInstance(
     return {
         instanceId: settings.instance_id,
         name: instance.FriendlyName,
-        running: instance.Running,
+        running: instance.AppState === READY_STATE,
         state: appStateLabel(instance.AppState),
         updated
     };
@@ -235,7 +250,8 @@ export async function checkAmpStatus(): Promise<CheckAmpStatusResult> {
             instanceId: i.InstanceID,
             name: i.FriendlyName,
             module: i.Module,
-            running: i.Running
+            running: i.AppState === READY_STATE,
+            state: appStateLabel(i.AppState)
         }));
 
         if (rows.length === 0) {
