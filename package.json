@@ -1,5 +1,5 @@
 {
-  "name": "wow-token-bot",
+  "name": "wrongspecbot",
   "version": "1.0.0",
   "description": "Discord bot for tracking WoW Token prices",
   "main": "dist/index.js",

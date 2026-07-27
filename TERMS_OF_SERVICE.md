@@ -1,14 +1,14 @@
-# Terms of Service - WoW Token Bot
+# Terms of Service - WrongSpecBot
 
 **Last Updated: [2025-06-24]**
 
 ## 1. Acceptance of Terms
 
-By inviting, using, or interacting with the WoW Token Bot ("the Bot") in your Discord server, you agree to be bound by these Terms of Service ("Terms"). If you do not agree to these Terms, please do not use the Bot.
+By inviting, using, or interacting with WrongSpecBot ("the Bot") in your Discord server, you agree to be bound by these Terms of Service ("Terms"). If you do not agree to these Terms, please do not use the Bot.
 
 ## 2. Description of Service
 
-The WoW Token Bot is a Discord bot that provides:
+WrongSpecBot is a Discord bot that provides:
 - Real-time World of Warcraft Token price information
 - Price threshold notifications
 - Historical price tracking and alerts
@@ -141,4 +141,4 @@ If you have questions about these Terms or the Bot, please contact us at:
 
 ---
 
-**By using the WoW Token Bot, you acknowledge that you have read, understood, and agree to be bound by these Terms of Service.** 
+**By using WrongSpecBot, you acknowledge that you have read, understood, and agree to be bound by these Terms of Service.** 

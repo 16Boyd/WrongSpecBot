@@ -21,7 +21,8 @@ ALTER TABLE server_status_settings ADD COLUMN IF NOT EXISTS offline_check_count 
 -- Enable Row Level Security
 ALTER TABLE server_status_settings ENABLE ROW LEVEL SECURITY;
 
--- Create a policy to allow all operations
+-- NOTE: This policy grants full read/write to anyone holding the anon key. It relies on
+-- SUPABASE_ANON_KEY being kept server-side only (never shipped to a client in this project).
 CREATE POLICY "Allow all operations on server_status_settings"
 ON server_status_settings
 FOR ALL

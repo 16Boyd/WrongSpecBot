@@ -1,42 +1,4 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, ChannelType } from 'discord.js';
-import { promises as fs } from 'fs';
-import path from 'path';
-
-const NOTIFICATIONS_FILE = path.join(__dirname, '../data/guild-notifications.json');
-
-interface GuildNotifications {
-    [guildId: string]: {
-        sellThreshold: number;
-        holdThreshold: number;
-        channelId: string;
-    };
-}
-
-// Ensure the data directory exists
-async function ensureDataDirectory(): Promise<void> {
-    const dataDir = path.join(__dirname, '../data');
-    try {
-        await fs.access(dataDir);
-    } catch {
-        await fs.mkdir(dataDir, { recursive: true });
-    }
-}
-
-// Load guild notifications
-async function loadGuildNotifications(): Promise<GuildNotifications> {
-    try {
-        const data = await fs.readFile(NOTIFICATIONS_FILE, 'utf8');
-        return JSON.parse(data);
-    } catch {
-        return {};
-    }
-}
-
-// Save guild notifications
-async function saveGuildNotifications(notifications: GuildNotifications): Promise<void> {
-    await ensureDataDirectory();
-    await fs.writeFile(NOTIFICATIONS_FILE, JSON.stringify(notifications, null, 2));
-}
 
 export const data = new SlashCommandBuilder()
     .setName('notify')
@@ -58,10 +20,10 @@ export const data = new SlashCommandBuilder()
             .addChannelTypes(ChannelType.GuildText));
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    // This function is not used in serverless deployment
-    // The actual logic is handled in api/interactions.js
+    // The actual /notify logic runs in the serverless handler (api/interactions.ts).
+    // This gateway-mode stub only exists so the command registers with a description.
     await interaction.reply({
         content: 'This command is handled by the serverless function.',
         ephemeral: true
     });
-} 
+}

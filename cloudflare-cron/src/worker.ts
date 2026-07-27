@@ -10,7 +10,7 @@ const ENDPOINTS = ['/api/check-prices', '/api/server-status'];
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const status = {
-      message: 'WoW Token Cron Worker is running',
+      message: 'WrongSpecBot Cron Worker is running',
       endpoints: ENDPOINTS,
       schedule: 'Every minute',
     };

@@ -1,4 +1,4 @@
-# WoW Token Discord Bot
+# WrongSpecBot
 
 A Discord bot for tracking World of Warcraft token prices with real-time notifications and alerts.
 
@@ -6,8 +6,8 @@ A Discord bot for tracking World of Warcraft token prices with real-time notific
 
 - 📊 Real-time WoW Token price tracking
 - 🔔 Customizable price threshold notifications
-- 🌍 Multi-region support (US, EU, KR, TW)
-- ⚡ Automatic price checking every 5 minutes
+- 🌍 Multi-region support for the `/token` command (US, EU, KR, TW); automated alerts track one configurable region (`WATCH_REGION`, default US)
+- ⚡ Automatic price checking on a schedule (driven by a Cloudflare Worker cron)
 - 📱 Discord slash commands
 - 🔒 Secure data storage with Supabase
 
@@ -21,8 +21,8 @@ A Discord bot for tracking World of Warcraft token prices with real-time notific
 
 1. **Clone the repository**
 ```bash
-git clone https://github.com/jasonb194/WoWToken.git
-cd WoWToken
+git clone https://github.com/jasonb194/WrongSpecBot.git
+cd WrongSpecBot
 ```
 
 2. **Install dependencies**
@@ -187,10 +187,15 @@ In Vercel project settings, add these environment variables:
 ```
 DISCORD_TOKEN=your_discord_bot_token
 CLIENT_ID=your_discord_client_id
+DISCORD_PUBLIC_KEY=your_discord_public_key
 BLIZZARD_CLIENT_ID=your_blizzard_client_id
 BLIZZARD_CLIENT_SECRET=your_blizzard_client_secret
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_ANON_KEY=your_supabase_anon_key
+CRON_SECRET=a_long_random_shared_secret
+AUTHORIZED_USERS=comma_separated_discord_user_ids
+DEFAULT_CHANNEL_ID=optional_fallback_channel_id
+WATCH_REGION=US
 ```
 
 ### Step 4: Deploy
@@ -199,46 +204,39 @@ SUPABASE_ANON_KEY=your_supabase_anon_key
 2. Wait for deployment to complete
 3. Your bot API will be available at `https://your-project.vercel.app`
 
-### Step 5: Set Up Cron Job (Price Checking)
+### Step 5: Scheduling
 
-1. In Vercel, go to **"Functions"** → **"Cron Jobs"**
-2. Create a new cron job:
-   - **Path**: `/api/check-prices`
-   - **Schedule**: `*/5 * * * *` (every 5 minutes)
-3. Save the cron job
+Scheduling is handled by the Cloudflare Worker in `cloudflare-cron/` (see section 5), which calls
+the `/api/check-prices` and `/api/server-status` endpoints on a schedule with the shared `CRON_SECRET`
+bearer token. A native Vercel Cron Job is **not** used, because it would not send the bearer token these
+endpoints now require.
 
 ---
 
-## 5. UptimeRobot Setup
+## 5. Cloudflare Worker (Cron) Setup
 
-### Step 1: Create UptimeRobot Account
+The scheduler lives in `cloudflare-cron/`. It triggers the price-check and server-status endpoints on a
+schedule and authenticates with the `CRON_SECRET` shared secret.
 
-1. Go to [UptimeRobot](https://uptimerobot.com/)
-2. Sign up for a free account
-3. Verify your email address
+### Step 1: Configure
 
-### Step 2: Add Monitor
+1. `cd cloudflare-cron`
+2. Review `wrangler.toml` — set the cron schedule under `[triggers]` (defaults to every minute) and
+   confirm the `account_id`.
 
-1. Click **"Add New Monitor"**
-2. Configure monitor:
-   - **Monitor Type**: HTTP(s)
-   - **Friendly Name**: "WoW Token Bot API"
-   - **URL**: `https://your-project.vercel.app/api/check-prices`
-   - **Monitoring Interval**: 5 minutes
-   - **Monitor Timeout**: 30 seconds
-3. Click **"Create Monitor"**
+### Step 2: Set Secrets/Variables
 
-### Step 3: Set Up Alerts (Optional)
+1. `npx wrangler secret put CRON_SECRET` — use the **same** value you set in Vercel.
+2. Set `VERCEL_BASE_URL` (e.g. `https://your-project.vercel.app`) as a variable/secret.
 
-1. Go to **"Alert Contacts"**
-2. Add your email/SMS/Discord webhook for notifications
-3. Configure when you want to be notified of downtime
+### Step 3: Deploy
 
-### Step 4: Monitor Status
+1. `npm install`
+2. `npm run deploy` (runs `wrangler deploy`)
 
-- Your monitor will start checking your bot's API endpoint
-- You'll get alerts if the bot goes down
-- Use the dashboard to track uptime statistics
+The worker will now call `/api/check-prices` and `/api/server-status` on the configured schedule. Each
+request includes `Authorization: Bearer <CRON_SECRET>`; requests without a valid token are rejected with
+`401`.
 
 ---
 
@@ -250,6 +248,8 @@ Create a `.env` file in your project root with all required variables:
 # Discord Bot Configuration
 DISCORD_TOKEN=your_discord_bot_token_here
 CLIENT_ID=your_discord_client_id_here
+# From the Discord Developer Portal (General Information > Public Key); required to verify interaction requests
+DISCORD_PUBLIC_KEY=your_discord_public_key_here
 
 # Blizzard API Configuration
 BLIZZARD_CLIENT_ID=your_blizzard_client_id_here
@@ -258,6 +258,18 @@ BLIZZARD_CLIENT_SECRET=your_blizzard_client_secret_here
 # Supabase Configuration
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your_supabase_anon_key_here
+
+# Cron authentication (shared secret between the Cloudflare Worker and the API endpoints)
+CRON_SECRET=a_long_random_shared_secret
+
+# Comma-separated Discord user IDs allowed to run /notify (use IDs, not usernames)
+AUTHORIZED_USERS=123456789012345678,234567890123456789
+
+# Optional: region the automated price checker watches (US, EU, KR, TW). Defaults to US.
+WATCH_REGION=US
+
+# Optional: fallback channel ID used by the price checker if none is configured via /notify
+DEFAULT_CHANNEL_ID=your_channel_id_here
 ```
 
 **⚠️ Security Note**: Never commit your `.env` file to version control. It's already included in `.gitignore`.
@@ -273,9 +285,12 @@ SUPABASE_ANON_KEY=your_supabase_anon_key_here
 
 ### Test API Endpoints
 
-1. Visit `https://your-project.vercel.app/api/check-prices` to test price checking
+1. Trigger the endpoint with the bearer token (a plain browser visit returns `401`):
+   ```bash
+   curl -H "Authorization: Bearer $CRON_SECRET" https://your-project.vercel.app/api/check-prices
+   ```
 2. Check Vercel logs for any errors
-3. Monitor UptimeRobot dashboard for uptime status
+3. Check the Cloudflare Worker logs (`npx wrangler tail` in `cloudflare-cron/`) to confirm scheduled runs
 
 ### Test Database
 
@@ -306,7 +321,7 @@ SUPABASE_ANON_KEY=your_supabase_anon_key_here
 
 ### Getting Help
 
-- **GitHub Issues**: [https://github.com/jasonb194/WoWToken/issues](https://github.com/jasonb194/WoWToken/issues)
+- **GitHub Issues**: [https://github.com/jasonb194/WrongSpecBot/issues](https://github.com/jasonb194/WrongSpecBot/issues)
 - **Documentation**: Check our [Terms of Service](./TERMS_OF_SERVICE.md) and [Privacy Policy](./PRIVACY_POLICY.md)
 
 ---
@@ -329,4 +344,4 @@ SUPABASE_ANON_KEY=your_supabase_anon_key_here
 
 ## 📄 License
 
-This project is licensed under the ISC License - see the [LICENSE](./WoWToken/LICENSE) file for details. 
+This project is licensed under the ISC License - see the [LICENSE](./WrongSpecBot/LICENSE) file for details. 
