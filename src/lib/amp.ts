@@ -239,16 +239,48 @@ export async function startInstance(sessionId: string, instanceId: string): Prom
     }
 }
 
+// Log into a specific instance THROUGH the controller's proxy, returning an instance-scoped
+// session. A controller session is not valid for an instance's own API — proxied calls fail with
+// "requires the Session.Exists permission" — so app-level control needs a session issued by the
+// instance itself. The controller session authorises the proxy hop; the body credentials
+// authenticate against the instance.
+async function instanceLogin(controllerSession: string, instanceId: string): Promise<string> {
+    const username = process.env.AMP_USERNAME;
+    const password = process.env.AMP_PASSWORD;
+    if (!username || !password) {
+        throw new Error('Missing AMP_USERNAME or AMP_PASSWORD environment variable');
+    }
+
+    const data = await ampCall<LoginResponse>(
+        `ADSModule/Servers/${instanceId}/API/Core/Login`,
+        { username, password, token: '', rememberMe: false },
+        controllerSession
+    );
+    console.info('AMP instance login result', {
+        instanceId,
+        success: data.success,
+        hasSession: !!data.sessionID,
+        resultReason: data.resultReason
+    });
+
+    if (!data.success || !data.sessionID) {
+        throw new Error(`AMP instance login failed: ${data.resultReason || 'success=false or missing sessionID'}`);
+    }
+    return data.sessionID;
+}
+
 // Start the game APPLICATION inside an instance — distinct from the instance's AMP daemon.
 // An instance's daemon can be Running:true while its application AppState is 0 (Stopped) — the
-// "paused when empty" state. Starting the app calls the instance's own Core/Start, proxied through
-// the controller at /API/ADSModule/Servers/<InstanceID>/API/Core/Start using the controller session.
-export async function startApplication(sessionId: string, instanceId: string): Promise<void> {
+// "paused when empty" state. Starting the app calls the instance's own Core/Start, which requires
+// an instance session (obtained via instanceLogin), not the controller session.
+export async function startApplication(controllerSession: string, instanceId: string): Promise<void> {
     console.info(`AMP Core/Start (application) requested for ${instanceId}`);
+    const instanceSession = await instanceLogin(controllerSession, instanceId);
+
     const data = await ampCall<ActionResultResponse>(
         `ADSModule/Servers/${instanceId}/API/Core/Start`,
         {},
-        sessionId
+        instanceSession
     );
     console.info('AMP Core/Start result', {
         instanceId,
