@@ -79,13 +79,11 @@ async function updateSettings(instanceId: string, fields: Partial<AmpStatusSetti
     }
 }
 
-// A human-readable status word for the {status} placeholder. A running server with no players
-// connected reads as "Idle" (up, but empty — e.g. before it auto-stops); with players, "Online".
+// A human-readable status word for the {status} placeholder, based purely on the app's state
+// (not player count): Ready -> Online, a transitional state -> its label, anything else
+// (Stopped/Failed/…) -> Offline.
 function statusWord(instance: AmpInstance): string {
-    if (instance.AppState === READY_STATE) {
-        const players = getPlayerCount(instance);
-        return players && players.online > 0 ? 'Online' : 'Idle';
-    }
+    if (instance.AppState === READY_STATE) return 'Online';
     if (TRANSITIONAL_STATES.includes(instance.AppState)) return appStateLabel(instance.AppState);
     return 'Offline';
 }
@@ -110,13 +108,9 @@ function buildMessage(instance: AmpInstance, settings: AmpStatusSettings): Messa
     // Show the Start button whenever the app is stopped/failed/etc. — anything that isn't Ready
     // and isn't already mid-transition.
     const showStart = !isReady && !isTransitioning;
-    const players = getPlayerCount(instance);
-    const idle = isReady && !(players && players.online > 0);
 
-    // Colour the embed bar by status: green online, yellow idle/transitioning, red offline.
-    const color = isReady
-        ? (idle ? 0xffcc00 : 0x00ff00)
-        : (isTransitioning ? 0xffcc00 : 0xff0000);
+    // Colour the embed bar by status: green online, yellow transitioning, red offline.
+    const color = isReady ? 0x00ff00 : isTransitioning ? 0xffcc00 : 0xff0000;
     const title = settings.title || instance.FriendlyName || instance.Module || 'Server Status';
     const description = renderDescription(settings.description_template || DEFAULT_TEMPLATE, instance);
 
