@@ -1,7 +1,25 @@
-name = "wowtoken-cron"
+# Deploying this worker requires Node.js >= 22 (wrangler v4). CI is pinned to Node 22.
+name = "wrongspecbot-cron"
 main = "src/worker.ts"
 compatibility_date = "2024-01-01"
 account_id = "e977f53a7276c5d2193a120ca3754a0a"  # Jasonb.194@gmail.com's Account
 
 [triggers]
 crons = ["* * * * *"]  # Every minute
+
+# Observability settings, kept in config so they stay consistent across deployments
+# (dashboard-only changes are otherwise overwritten by `wrangler deploy`).
+[observability]
+enabled = false
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1

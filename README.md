@@ -1,13 +1,24 @@
-# WoW Token Discord Bot
+# WrongSpecBot
 
-A Discord bot for tracking World of Warcraft token prices with real-time notifications and alerts.
+A Discord bot for World of Warcraft token prices and live game-server status, with real-time
+notifications and alerts.
+
+## What it does
+
+WrongSpecBot runs as a set of **serverless endpoints on Vercel** that respond to Discord slash
+commands and button clicks. A **Cloudflare Worker** triggers the bot on a schedule (every minute
+by default) to check prices, realm status, and AMP game-server status, then posts or edits
+messages in Discord. State (alert thresholds, channel/message IDs, instance config) is stored in
+**Supabase**.
 
 ## Features
 
 - 📊 Real-time WoW Token price tracking
 - 🔔 Customizable price threshold notifications
-- 🌍 Multi-region support (US, EU, KR, TW)
-- ⚡ Automatic price checking every 5 minutes
+- 🌍 Multi-region support for the `/token` command (US, EU, KR, TW); automated alerts track one configurable region (`WATCH_REGION`, default US)
+- 🖧 WoW realm up/down status monitoring, reported to a Discord channel
+- ⚡ Automatic price/status checking on a schedule (driven by a Cloudflare Worker cron)
+- 🖥️ Live AMP game-server instance status in Discord, with a one-click **Start Server** button
 - 📱 Discord slash commands
 - 🔒 Secure data storage with Supabase
 
@@ -21,8 +32,8 @@ A Discord bot for tracking World of Warcraft token prices with real-time notific
 
 1. **Clone the repository**
 ```bash
-git clone https://github.com/jasonb194/WoWToken.git
-cd WoWToken
+git clone https://github.com/jasonb194/WrongSpecBot.git
+cd WrongSpecBot
 ```
 
 2. **Install dependencies**
@@ -45,6 +56,70 @@ npm run dev
 # Production mode
 npm start
 ```
+
+---
+
+# 🚀 Run Your Own Instance (Fork Guide)
+
+WrongSpecBot is open source, and it's built to be self-hosted. Because all state lives in **your**
+Supabase project and all secrets live in **your** Vercel project, forking the repo gives you a fully
+independent bot — your own Discord application, your own price alerts, and (optionally) your own AMP
+game server. You don't need to touch the original project at all.
+
+Here's the high-level path; each step links to the detailed section below.
+
+1. **Fork the repository on GitHub.** Click **Fork** at the top of
+   [github.com/jasonb194/WrongSpecBot](https://github.com/jasonb194/WrongSpecBot). This creates a copy
+   under your own account that you can deploy and modify freely.
+
+2. **Create your own Discord application and bot.** Follow [Discord Bot Setup](#1-discord-bot-setup)
+   to get a `DISCORD_TOKEN`, `CLIENT_ID`, and `DISCORD_PUBLIC_KEY`, and to invite the bot to your
+   server. This must be *your* application — you can't reuse someone else's bot token.
+
+3. **Get Blizzard API credentials.** Follow [Blizzard API Setup](#2-blizzard-api-setup) for
+   `BLIZZARD_CLIENT_ID` and `BLIZZARD_CLIENT_SECRET` (needed for token prices and realm status).
+
+4. **Create your own Supabase project and run the SQL.** Follow [Supabase Setup](#3-supabase-setup).
+   Run `supabase-setup.sql`, `supabase-server-status.sql`, and `supabase-amp-status.sql` to create all
+   the tables. Copy your `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
+
+5. **Deploy your fork to Vercel.** Follow [Vercel Deployment](#4-vercel-deployment): import **your
+   forked repo** (not the original), add all the environment variables, and deploy. Your bot's public
+   URL will be `https://<your-project>.vercel.app`.
+
+6. **Point Discord at your deployment.** In the Discord Developer Portal, set the application's
+   **Interactions Endpoint URL** to `https://<your-project>.vercel.app/api/interactions`. Discord
+   sends a verification ping when you save; it must succeed, which requires `DISCORD_PUBLIC_KEY` to be
+   set correctly in Vercel.
+
+7. **Register the slash commands.** From a local clone of your fork with the same env vars in a `.env`
+   file, run `npm install` then `npm run deploy`. This registers `/token`, `/notify`, and `/ping`
+   with Discord.
+
+8. **Set up the scheduler.** Follow [Cloudflare Worker Setup](#5-cloudflare-worker-cron-setup). Set
+   `VERCEL_BASE_URL` to your Vercel URL and use the **same** `CRON_SECRET` in both Cloudflare and
+   Vercel, then deploy the worker. This is what drives the automated price/status checks.
+
+9. **(Optional) Enable AMP game-server status.** If you run a [CubeCoders AMP](https://cubecoders.com/AMP)
+   panel, follow [AMP Instance Status Setup](#5a-amp-instance-status-setup) to add credentials and
+   configure instances. Skip this entirely if you don't — the rest of the bot works without it.
+
+### Notes for self-hosters
+
+- **Everything is yours.** Your fork reads and writes only your Supabase project and uses only your
+  secrets. There is no shared backend with the original bot.
+- **Keep secrets in Vercel, not in the repo.** Never commit a `.env` file. All secrets are configured
+  as environment variables in your Vercel project (and in Cloudflare for the worker). `.env` is already
+  in `.gitignore`.
+- **Pulling in updates.** To get future improvements, add the original as a remote and merge:
+  ```bash
+  git remote add upstream https://github.com/jasonb194/WrongSpecBot.git
+  git fetch upstream
+  git merge upstream/main
+  ```
+  Re-run any new SQL migrations in your Supabase project after merging.
+- **Costs.** Vercel, Supabase, and Cloudflare Workers all have free tiers that comfortably cover a
+  personal bot. Blizzard's API is free for this usage.
 
 ---
 
@@ -144,6 +219,7 @@ npm start
 2. Go to **"SQL Editor"** in the left sidebar
 3. Copy the contents of `supabase-setup.sql` from this repository
 4. Paste into the SQL editor and click **"Run"**
+5. Repeat for `supabase-server-status.sql` (realm status) and `supabase-amp-status.sql` (AMP instance status) to create those tables
 
 ### Step 3: Get Project Credentials
 
@@ -187,10 +263,19 @@ In Vercel project settings, add these environment variables:
 ```
 DISCORD_TOKEN=your_discord_bot_token
 CLIENT_ID=your_discord_client_id
+DISCORD_PUBLIC_KEY=your_discord_public_key
 BLIZZARD_CLIENT_ID=your_blizzard_client_id
 BLIZZARD_CLIENT_SECRET=your_blizzard_client_secret
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_ANON_KEY=your_supabase_anon_key
+CRON_SECRET=a_long_random_shared_secret
+AUTHORIZED_USERS=comma_separated_discord_user_ids
+DEFAULT_CHANNEL_ID=optional_fallback_channel_id
+WATCH_REGION=US
+AMP_URL=https://your-amp-panel:8080
+AMP_USERNAME=your_amp_username
+AMP_PASSWORD=your_amp_password
+AMP_INSECURE_TLS=true   # only if AMP uses a self-signed HTTPS certificate
 ```
 
 ### Step 4: Deploy
@@ -199,46 +284,131 @@ SUPABASE_ANON_KEY=your_supabase_anon_key
 2. Wait for deployment to complete
 3. Your bot API will be available at `https://your-project.vercel.app`
 
-### Step 5: Set Up Cron Job (Price Checking)
+### Step 5: Scheduling
 
-1. In Vercel, go to **"Functions"** → **"Cron Jobs"**
-2. Create a new cron job:
-   - **Path**: `/api/check-prices`
-   - **Schedule**: `*/5 * * * *` (every 5 minutes)
-3. Save the cron job
+Scheduling is handled by the Cloudflare Worker in `cloudflare-cron/` (see section 5), which calls
+the `/api/check-prices`, `/api/server-status`, and `/api/amp-status` endpoints on a schedule with the
+shared `CRON_SECRET` bearer token. A native Vercel Cron Job is **not** used, because it would not send the
+bearer token these endpoints now require.
 
 ---
 
-## 5. UptimeRobot Setup
+## 5. Cloudflare Worker (Cron) Setup
 
-### Step 1: Create UptimeRobot Account
+The scheduler lives in `cloudflare-cron/`. It triggers the price-check, server-status, and AMP-status
+endpoints on a schedule and authenticates with the `CRON_SECRET` shared secret.
 
-1. Go to [UptimeRobot](https://uptimerobot.com/)
-2. Sign up for a free account
-3. Verify your email address
+### Step 1: Configure
 
-### Step 2: Add Monitor
+1. `cd cloudflare-cron`
+2. Review `wrangler.toml` — set the cron schedule under `[triggers]` (defaults to every minute) and
+   confirm the `account_id`.
 
-1. Click **"Add New Monitor"**
-2. Configure monitor:
-   - **Monitor Type**: HTTP(s)
-   - **Friendly Name**: "WoW Token Bot API"
-   - **URL**: `https://your-project.vercel.app/api/check-prices`
-   - **Monitoring Interval**: 5 minutes
-   - **Monitor Timeout**: 30 seconds
-3. Click **"Create Monitor"**
+### Step 2: Set Secrets/Variables
 
-### Step 3: Set Up Alerts (Optional)
+1. `npx wrangler secret put CRON_SECRET` — use the **same** value you set in Vercel.
+2. Set `VERCEL_BASE_URL` (e.g. `https://your-project.vercel.app`) as a variable/secret.
 
-1. Go to **"Alert Contacts"**
-2. Add your email/SMS/Discord webhook for notifications
-3. Configure when you want to be notified of downtime
+### Step 3: Deploy
 
-### Step 4: Monitor Status
+1. `npm install`
+2. `npm run deploy` (runs `wrangler deploy`)
 
-- Your monitor will start checking your bot's API endpoint
-- You'll get alerts if the bot goes down
-- Use the dashboard to track uptime statistics
+The worker will now call `/api/check-prices`, `/api/server-status`, and `/api/amp-status` on the
+configured schedule. Each request includes `Authorization: Bearer <CRON_SECRET>`; requests without a
+valid token are rejected with `401`.
+
+---
+
+## 5a. AMP Instance Status Setup
+
+This feature posts a live status message for one or more AMP (CubeCoders Application Management Panel)
+game-server instances and keeps them updated. Each instance is a separate row in the
+`amp_instance_status` table with its own channel, title, and template. When an instance is stopped, its
+message includes a green **Start Server** button that calls the AMP API to boot it — handy when the
+instance is configured to auto-stop once the last player leaves.
+
+The embed's title and body are **fully author-controlled** via a template stored in Supabase, so you can
+include static details AMP doesn't expose (community server name, domain, password, house rules) alongside
+live values. The following placeholders are substituted on every update:
+
+| Placeholder   | Replaced with                                             |
+| ------------- | --------------------------------------------------------- |
+| `{status}`    | `Online` / `Offline` / a transitional label (`Starting`…) |
+| `{userCount}` | current online player count                               |
+| `{maxUsers}`  | maximum player slots (from AMP metrics)                   |
+| `{state}`     | raw AMP state label (`Ready`, `Stopped`, …)               |
+| `{domain}`    | the host from `AMP_URL` (e.g. `amp.example.com`)          |
+| `{port}`      | the row's `port` value (see note below)                   |
+
+**About `{domain}` and `{port}`:** AMP's instance data only reports the server's *bind* address
+(usually `0.0.0.0`), not a public domain, and games commonly expose several ports (game, query, RCON,
+REST…) with no reliable way to know which one players should use. So `{domain}` is derived from the
+`AMP_URL` host (the panel and game servers share a host in the typical single-box setup), and `{port}`
+is read from a per-row **`port`** column you set to the one port worth showing. Leave `port` null and
+`{port}` renders empty; if a game needs several ports shown, list the extras as literal text in the
+template.
+
+**Layout — side-by-side columns:** by default the whole template renders as one tall column. To make
+the message shorter, add a `{split}` marker where you want a column break. Discord stacks whole embeds
+vertically, so each chunk between `{split}` markers is rendered as an **inline embed field**, which
+Discord lays out in a row (up to 3 columns). One `{split}` gives you two columns side by side — e.g.
+connection info on the left, server stats and house rules on the right (see the example in
+`supabase-amp-status.sql`). Templates with no `{split}` are unchanged.
+
+### Step 1: Provide AMP credentials
+
+Set `AMP_URL`, `AMP_USERNAME`, and `AMP_PASSWORD` in Vercel (used by both the scheduled `/api/amp-status`
+endpoint and the button handler in `/api/interactions`). Use an AMP account with permission to view and
+start the instance. `AMP_URL` is the base panel URL, e.g. `https://amp.example.com` or `http://1.2.3.4:8080`.
+
+If AMP is served over **HTTPS with a self-signed certificate**, also set `AMP_INSECURE_TLS=true`. Node
+rejects self-signed certificates by default (you'd see `Client network socket disconnected before secure
+TLS connection was established` or a certificate error); this flag skips certificate verification for AMP
+requests only. All other outbound TLS (Discord, Blizzard, Supabase) stays fully verified.
+
+### Step 2: Configure instances in Supabase
+
+The feature is inactive until at least one instance is configured. **Add one row per instance** in the
+`amp_instance_status` table (the setup SQL includes an example `INSERT` you can duplicate). Each row has:
+
+- `instance_id` — the AMP **InstanceID** (a GUID) of the instance to watch (primary key)
+- `channel_id` — the Discord channel where this instance's status message should be posted
+- `title` (optional) — embed title; defaults to the instance's friendly name if left blank
+- `port` (optional) — the port shown by `{port}`; leave null if you don't use `{port}`
+- `description_template` (optional) — the embed body; the setup SQL seeds an example you can edit
+
+To find the InstanceID, open the instance in AMP and copy the GUID from its URL, or call
+`ADSModule/GetInstances` and read the `InstanceID` field.
+
+Each run performs a single AMP login + `GetInstances` and then updates every configured row, so adding
+more instances doesn't multiply the AMP API calls. The worker posts each status message on its next run
+and edits it in place whenever that instance's status changes. Anyone in the channel can press **Start
+Server** — this is intentional, since the point is to let players bring an auto-stopped server back
+online.
+
+When someone presses **Start Server**, the status message immediately shows `Start Requested` and the
+user gets a private confirmation that auto-dismisses a few minutes later (the `ephemeral_message_cleanup`
+table, created by the setup SQL, tracks these — the every-minute cron performs the delayed deletion,
+since serverless functions can't wait).
+
+**How the start actually runs (and why it's reliable).** The AMP start chain (login → `StartInstance`
+→ instance login → `Core/Start`) takes longer than Discord's ~3-second interaction limit, and a
+serverless function is frozen once it sends its response — so the start can't run before the reply
+(times out) *or* naively after it (frozen). Instead the button does only the fast work before
+replying — flip the message to `Start Requested` and set `start_pending` — then starts the server in
+the background via Vercel's `waitUntil()` (which keeps the function alive for that work). If the runtime
+still froze that background attempt, the `start_pending` flag makes the **amp-status cron perform the
+start itself within a minute**, so the server always starts; the `waitUntil` path just makes it usually
+immediate. (Re-starting an already-running server is a no-op in AMP, so the two paths can't conflict.)
+
+Because a game server can take a while to leave the Stopped state, a **2-minute grace window** (tracked
+by the `start_requested_at` column) keeps the `Start Requested` message in place while the app is still
+offline, so it doesn't briefly flip back to `Offline` mid-boot. Once the server starts
+transitioning/comes online, or the grace window elapses, the message updates normally. AMP has two
+layers: the instance *daemon* (started via `ADSModule/StartInstance`) and the game *application* inside
+it (started via the instance's own `Core/Start`, which needs an instance-scoped login). The start does
+both.
 
 ---
 
@@ -250,6 +420,8 @@ Create a `.env` file in your project root with all required variables:
 # Discord Bot Configuration
 DISCORD_TOKEN=your_discord_bot_token_here
 CLIENT_ID=your_discord_client_id_here
+# From the Discord Developer Portal (General Information > Public Key); required to verify interaction requests
+DISCORD_PUBLIC_KEY=your_discord_public_key_here
 
 # Blizzard API Configuration
 BLIZZARD_CLIENT_ID=your_blizzard_client_id_here
@@ -258,6 +430,26 @@ BLIZZARD_CLIENT_SECRET=your_blizzard_client_secret_here
 # Supabase Configuration
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your_supabase_anon_key_here
+
+# Cron authentication (shared secret between the Cloudflare Worker and the API endpoints)
+CRON_SECRET=a_long_random_shared_secret
+
+# Comma-separated Discord user IDs allowed to run /notify (use IDs, not usernames)
+AUTHORIZED_USERS=123456789012345678,234567890123456789
+
+# Optional: region the automated price checker watches (US, EU, KR, TW). Defaults to US.
+WATCH_REGION=US
+
+# Optional: fallback channel ID used by the price checker if none is configured via /notify
+DEFAULT_CHANNEL_ID=your_channel_id_here
+
+# AMP (CubeCoders Application Management Panel) — required only for the AMP instance status feature
+AMP_URL=https://your-amp-panel:8080
+AMP_USERNAME=your_amp_username
+AMP_PASSWORD=your_amp_password
+# Set to true ONLY if AMP is served over HTTPS with a self-signed certificate. Skips TLS
+# certificate verification for AMP requests only (Discord/Blizzard/Supabase stay verified).
+AMP_INSECURE_TLS=true
 ```
 
 **⚠️ Security Note**: Never commit your `.env` file to version control. It's already included in `.gitignore`.
@@ -273,9 +465,12 @@ SUPABASE_ANON_KEY=your_supabase_anon_key_here
 
 ### Test API Endpoints
 
-1. Visit `https://your-project.vercel.app/api/check-prices` to test price checking
+1. Trigger the endpoint with the bearer token (a plain browser visit returns `401`):
+   ```bash
+   curl -H "Authorization: Bearer $CRON_SECRET" https://your-project.vercel.app/api/check-prices
+   ```
 2. Check Vercel logs for any errors
-3. Monitor UptimeRobot dashboard for uptime status
+3. Check the Cloudflare Worker logs (`npx wrangler tail` in `cloudflare-cron/`) to confirm scheduled runs
 
 ### Test Database
 
@@ -306,7 +501,7 @@ SUPABASE_ANON_KEY=your_supabase_anon_key_here
 
 ### Getting Help
 
-- **GitHub Issues**: [https://github.com/jasonb194/WoWToken/issues](https://github.com/jasonb194/WoWToken/issues)
+- **GitHub Issues**: [https://github.com/jasonb194/WrongSpecBot/issues](https://github.com/jasonb194/WrongSpecBot/issues)
 - **Documentation**: Check our [Terms of Service](./TERMS_OF_SERVICE.md) and [Privacy Policy](./PRIVACY_POLICY.md)
 
 ---
@@ -323,10 +518,10 @@ SUPABASE_ANON_KEY=your_supabase_anon_key_here
 - **Runtime**: Node.js
 - **Bot Framework**: Discord.js v14
 - **Database**: Supabase (PostgreSQL)
-- **Hosting**: Vercel
-- **Monitoring**: UptimeRobot
-- **APIs**: Blizzard Battle.net API
+- **Hosting**: Vercel (serverless functions)
+- **Scheduler**: Cloudflare Worker cron
+- **APIs**: Blizzard Battle.net API, CubeCoders AMP API
 
 ## 📄 License
 
-This project is licensed under the ISC License - see the [LICENSE](./WoWToken/LICENSE) file for details. 
+This project is licensed under the ISC License - see the [LICENSE](./WrongSpecBot/LICENSE) file for details. 

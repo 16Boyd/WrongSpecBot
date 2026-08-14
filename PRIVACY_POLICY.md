@@ -1,12 +1,12 @@
-# Privacy Policy - WoW Token Bot
+# Privacy Policy - WrongSpecBot
 
 **Last Updated: [DATE]**
 
 ## 1. Introduction
 
-This Privacy Policy describes how the WoW Token Bot ("we", "our", "us", or "the Bot") collects, uses, and protects your information when you use our Discord bot service. We are committed to protecting your privacy and being transparent about our data practices.
+This Privacy Policy describes how WrongSpecBot ("we", "our", "us", or "the Bot") collects, uses, and protects your information when you use our Discord bot service. We are committed to protecting your privacy and being transparent about our data practices.
 
-By using the WoW Token Bot, you agree to the collection and use of information in accordance with this Privacy Policy.
+By using WrongSpecBot, you agree to the collection and use of information in accordance with this Privacy Policy.
 
 ## 2. Information We Collect
 
@@ -198,4 +198,4 @@ For Discord server administrators who need a Data Processing Agreement (DPA) for
 
 ---
 
-**This Privacy Policy is effective as of 2025-06-24 and governs the privacy practices of the WoW Token Bot. By using the Bot, you acknowledge that you have read and understood this Privacy Policy.** 
+**This Privacy Policy is effective as of 2025-06-24 and governs the privacy practices of WrongSpecBot. By using the Bot, you acknowledge that you have read and understood this Privacy Policy.** 

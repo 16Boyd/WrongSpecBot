@@ -20,10 +20,10 @@ export const data = new SlashCommandBuilder()
             .addChannelTypes(ChannelType.GuildText));
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    // This function is not used in serverless deployment
-    // The actual logic is handled in api/interactions.js
+    // The actual /notify logic runs in the serverless handler (api/interactions.ts).
+    // This gateway-mode stub only exists so the command registers with a description.
     await interaction.reply({
         content: 'This command is handled by the serverless function.',
         ephemeral: true
     });
-} 
+}

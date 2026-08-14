@@ -5,12 +5,12 @@ export interface Env {
   VERCEL_BASE_URL: string;
 }
 
-const ENDPOINTS = ['/api/check-prices', '/api/server-status'];
+const ENDPOINTS = ['/api/check-prices', '/api/server-status', '/api/amp-status'];
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const status = {
-      message: 'WoW Token Cron Worker is running',
+      message: 'WrongSpecBot Cron Worker is running',
       endpoints: ENDPOINTS,
       schedule: 'Every minute',
     };

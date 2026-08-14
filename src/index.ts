@@ -41,14 +41,16 @@ client.commands = new Collection<string, Command>();
 // Load commands
 async function loadCommands(): Promise<void> {
     const commandsPath = join(__dirname, 'commands');
-    const commandFiles = (await readdir(commandsPath)).filter(file => file.endsWith('.ts'));
+    const commandFiles = (await readdir(commandsPath))
+        .filter(file => (file.endsWith('.ts') || file.endsWith('.js')) && !file.endsWith('.d.ts'));
 
     for (const file of commandFiles) {
         const filePath = join(commandsPath, file);
-        const command = await import(filePath) as { default: Command };
-        
-        if ('data' in command.default && 'execute' in command.default) {
-            client.commands.set(command.default.data.name, command.default);
+        // Commands use named exports (`data`, `execute`), not a default export.
+        const command = await import(filePath) as Command;
+
+        if ('data' in command && 'execute' in command) {
+            client.commands.set(command.data.name, command);
         } else {
             console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
         }

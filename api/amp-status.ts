@@ -1,4 +1,4 @@
-import { checkServerStatus } from '../src/tasks/checkServerStatus';
+import { checkAmpStatus } from '../src/tasks/checkAmpStatus';
 import Logger from '../src/lib/logger';
 import { isCronAuthorized } from '../src/lib/auth';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -7,10 +7,10 @@ export default async function handler(
     req: VercelRequest,
     res: VercelResponse
 ): Promise<void> {
-    const logger = new Logger('server-status-api');
+    const logger = new Logger('amp-status-api');
 
     try {
-        logger.info('Server-status function started', { method: req.method });
+        logger.info('AMP-status function started', { method: req.method });
 
         // Triggered by the Cloudflare Worker with a shared bearer secret.
         if (!isCronAuthorized(req)) {
@@ -23,21 +23,21 @@ export default async function handler(
             return;
         }
 
-        logger.info('Request authorized, checking server status...');
+        logger.info('Request authorized, checking AMP instance status...');
 
-        const result = await checkServerStatus();
-        logger.info('Server status check completed', result as unknown as Record<string, unknown>);
+        const result = await checkAmpStatus();
+        logger.info('AMP status check completed', result as unknown as Record<string, unknown>);
         await logger.flush();
 
         res.status(200).json({
             status: 'completed',
-            message: 'Server status check completed',
+            message: 'AMP status check completed',
             result,
             timestamp: new Date().toISOString()
         });
     } catch (error) {
         const err = error as Error;
-        logger.error('Error in server-status endpoint', {
+        logger.error('Error in amp-status endpoint', {
             message: err.message,
             stack: err.stack
         });

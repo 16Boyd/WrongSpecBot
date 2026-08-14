@@ -1,26 +1,7 @@
-import { Client, GatewayIntentBits } from 'discord.js';
 import { checkPrices } from '../src/tasks/checkPrices';
 import Logger from '../src/lib/logger';
-import { checkCronAuth } from '../src/lib/cronAuth';
+import { isCronAuthorized } from '../src/lib/auth';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-
-// Initialize Discord client for notifications
-const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.DirectMessages
-    ]
-});
-
-interface ApiResponse {
-    status?: 'completed' | 'error';
-    message: string;
-    error?: string;
-    result?: any;
-    timestamp: string;
-}
 
 // Export the handler for Vercel
 export default async function handler(
@@ -28,20 +9,13 @@ export default async function handler(
     res: VercelResponse
 ): Promise<void> {
     const logger = new Logger('check-prices-api');
-    
-    try {
-        logger.info('VERCEL CHECK-PRICES FUNCTION STARTED');
-        logger.info('Request details', {
-            method: req.method,
-            headers: req.headers,
-            userAgent: req.headers['user-agent']
-        });
-        
-        // Check authorization: UptimeRobot user-agent OR Bearer token (from Cloudflare)
-        const { authorized, authMethod } = checkCronAuth(req, logger);
 
-        if (!authorized) {
-            logger.warn('Request unauthorized - not UptimeRobot and no valid token');
+    try {
+        logger.info('Check-prices function started', { method: req.method });
+
+        // Triggered by the Cloudflare Worker with a shared bearer secret.
+        if (!isCronAuthorized(req)) {
+            logger.warn('Request unauthorized - missing or invalid bearer token');
             await logger.flush();
             res.status(401).json({
                 message: 'Unauthorized',
@@ -50,16 +24,14 @@ export default async function handler(
             return;
         }
 
-        logger.info('Request authorized, starting price check...', { authMethod });
-        
-        // Process synchronously to ensure logs are written
+        logger.info('Request authorized, starting price check...');
+
         try {
             const result = await checkPrices();
             logger.info('Price check completed successfully', result as unknown as Record<string, unknown>);
-            logger.info('VERCEL CHECK-PRICES FUNCTION COMPLETED');
             await logger.flush();
-            
-            res.status(200).json({ 
+
+            res.status(200).json({
                 status: 'completed',
                 message: 'Price check completed successfully',
                 result,
@@ -73,8 +45,8 @@ export default async function handler(
                 stack: error.stack
             });
             await logger.flush();
-            
-            res.status(500).json({ 
+
+            res.status(500).json({
                 status: 'error',
                 message: 'Price check failed',
                 error: error.message,
@@ -82,20 +54,18 @@ export default async function handler(
             });
             return;
         }
-        
     } catch (error) {
         const err = error as Error;
         logger.error('Error in check-prices endpoint', {
             message: err.message,
             stack: err.stack
         });
-        logger.error('VERCEL CHECK-PRICES FUNCTION ERROR');
         await logger.flush();
-        
-        res.status(500).json({ 
+
+        res.status(500).json({
             message: 'Internal server error',
             error: err.message,
             timestamp: new Date().toISOString()
         });
     }
-} 
+}
