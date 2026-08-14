@@ -24,11 +24,19 @@ async function main() {
         return;
     }
 
-    const connectionString = process.env.POSTGRES_URL_NON_POOLING;
-    if (!connectionString) {
+    const rawConnectionString = process.env.POSTGRES_URL_NON_POOLING;
+    if (!rawConnectionString) {
         console.log('POSTGRES_URL_NON_POOLING not set, skipping Supabase migrations');
         return;
     }
+
+    // pg-connection-string treats a `sslmode=require|prefer|verify-ca` query param on the
+    // connection string as an alias for verify-full, which overrides the `ssl.rejectUnauthorized:
+    // false` below and fails the connection to Supabase's self-signed pooler cert. Force
+    // `no-verify` on the string itself so it can't win that override.
+    const connectionUrl = new URL(rawConnectionString);
+    connectionUrl.searchParams.set('sslmode', 'no-verify');
+    const connectionString = connectionUrl.toString();
 
     const client = new Client({
         connectionString,
