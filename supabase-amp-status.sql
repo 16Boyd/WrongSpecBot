@@ -30,6 +30,7 @@ ALTER TABLE amp_instance_status ENABLE ROW LEVEL SECURITY;
 
 -- NOTE: This policy grants full read/write to anyone holding the anon key. It relies on
 -- SUPABASE_ANON_KEY being kept server-side only (never shipped to a client in this project).
+DROP POLICY IF EXISTS "Allow all operations on amp_instance_status" ON amp_instance_status;
 CREATE POLICY "Allow all operations on amp_instance_status"
 ON amp_instance_status
 FOR ALL
@@ -67,6 +68,7 @@ CREATE TABLE IF NOT EXISTS ephemeral_message_cleanup (
 
 ALTER TABLE ephemeral_message_cleanup ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Allow all operations on ephemeral_message_cleanup" ON ephemeral_message_cleanup;
 CREATE POLICY "Allow all operations on ephemeral_message_cleanup"
 ON ephemeral_message_cleanup
 FOR ALL

@@ -194,7 +194,27 @@ const EPHEMERAL_CLEANUP_MS = 3 * 60 * 1000;
 
 // Update the public status message to show "Start Requested" until the next scheduled check
 // refreshes it with the real state. Best-effort — failure here shouldn't fail the start.
-async function markStartRequested(instanceId: string): Promise<void> {
+// The single round trip that must complete before the ACK: it's what lets the cron guarantee a
+// start happens even if everything else (the Discord edit below, the background AMP start) is
+// dropped or frozen. start_requested_at opens the grace window: while it's recent and the app is
+// still offline, the cron keeps showing "Start Requested" instead of reverting to Offline.
+// start_pending marks that a start must happen — the cron performs it if the button's background
+// attempt was frozen by the serverless runtime.
+async function markStartPending(instanceId: string): Promise<void> {
+    const now = new Date().toISOString();
+    try {
+        await supabase
+            .from('amp_instance_status')
+            .update({ start_requested_at: now, start_pending: true, updated_at: now })
+            .eq('instance_id', instanceId);
+    } catch (error) {
+        console.error('Failed to mark start requested:', error instanceof Error ? error.message : error);
+    }
+}
+
+// Update the public status message to show "Start Requested". Best-effort and not needed before
+// the ACK, so callers run this in the background after responding.
+async function updateStartRequestedMessage(instanceId: string): Promise<void> {
     try {
         const { data, error } = await supabase
             .from('amp_instance_status')
@@ -219,18 +239,13 @@ async function markStartRequested(instanceId: string): Promise<void> {
         });
 
         await editChannelMessage(data.channel_id, data.message_id, message);
-        // Store this as last_status so the cron sees a change next tick and re-renders the real
-        // state. start_requested_at opens the grace window: while it's recent and the app is still
-        // offline, the cron keeps this "Start Requested" message instead of reverting to Offline.
-        // start_pending marks that a start must happen — the cron performs it if the button's
-        // background attempt was frozen by the serverless runtime.
-        const now = new Date().toISOString();
+        // Store this as last_status so the cron sees a change next tick and re-renders the real state.
         await supabase
             .from('amp_instance_status')
-            .update({ last_status: ampMessageSignature(message), start_requested_at: now, start_pending: true, updated_at: now })
+            .update({ last_status: ampMessageSignature(message) })
             .eq('instance_id', instanceId);
     } catch (error) {
-        console.error('Failed to mark start requested:', error instanceof Error ? error.message : error);
+        console.error('Failed to update Start Requested message:', error instanceof Error ? error.message : error);
     }
 }
 
@@ -262,13 +277,12 @@ async function handleAmpStart(interaction: APIMessageComponentInteraction, res: 
         return;
     }
 
-    // Do the FAST, must-not-be-lost work BEFORE responding: flip the public message to "Start
-    // Requested" and set start_pending. These are quick (Supabase + one Discord edit, well within
-    // Discord's ~3s window) and — crucially — reliable, because they run before the response. The
-    // slow AMP start does NOT run here: doing it before the reply blew past the 3s window ("Did not
-    // respond in time"), and doing it after a plain response gets frozen by the serverless runtime.
-    await markStartRequested(instanceId);
-    await scheduleEphemeralCleanup(interaction.application_id, interaction.token);
+    // Do the ONE round trip that must not be lost BEFORE responding: set start_pending. This is
+    // what guarantees the amp-status cron performs the start within a minute even if everything
+    // below is dropped or frozen. Keeping this to a single await here is what keeps the response
+    // well within Discord's ~3s ACK window — see markStartPending's comment for why the rest can't
+    // just run sequentially here too.
+    await markStartPending(instanceId);
 
     res.status(200).json({
         type: InteractionResponseType.ChannelMessageWithSource,
@@ -278,14 +292,28 @@ async function handleAmpStart(interaction: APIMessageComponentInteraction, res: 
         }
     });
 
-    // Kick off the actual start in the background. waitUntil() tells Vercel to keep the function
-    // alive until this resolves (a plain await after the response would be frozen). If it still
-    // gets frozen, start_pending set above makes the amp-status cron perform the start within a
-    // minute — so the server always starts, this path just makes it usually immediate.
+    // Everything else runs in the background after the ACK: waitUntil() tells Vercel to keep the
+    // function alive until these resolve (a plain await after the response would be frozen). If
+    // any of it gets frozen anyway, start_pending set above makes the amp-status cron perform the
+    // start itself within a minute — so the server always starts, this path just makes it usually
+    // immediate. Once the start attempt has actually issued the start, clear start_pending so a
+    // cron tick that lands before the game finishes booting (still isOffline) doesn't treat it as
+    // frozen and fire a duplicate start sequence.
     waitUntil(
-        startServer(instanceId).catch(error =>
-            console.error('Background AMP start failed (cron will retry):', error instanceof Error ? error.message : error)
-        )
+        Promise.all([
+            updateStartRequestedMessage(instanceId),
+            scheduleEphemeralCleanup(interaction.application_id, interaction.token),
+            startServer(instanceId)
+                .then(() =>
+                    supabase
+                        .from('amp_instance_status')
+                        .update({ start_pending: false })
+                        .eq('instance_id', instanceId)
+                )
+                .catch(error =>
+                    console.error('Background AMP start failed (cron will retry):', error instanceof Error ? error.message : error)
+                )
+        ])
     );
 }
 
@@ -299,71 +327,80 @@ export default async function handler(
         return;
     }
 
-    const rawBody = await readRawBody(req);
-
-    if (!verifyDiscordRequest(req, rawBody)) {
-        res.status(401).json({ error: 'Invalid request signature' });
-        return;
-    }
-
-    let interaction: APIInteraction;
     try {
-        interaction = JSON.parse(rawBody) as APIInteraction;
-    } catch {
-        res.status(400).json({ error: 'Invalid JSON body' });
-        return;
-    }
+        const rawBody = await readRawBody(req);
 
-    if (interaction.type === InteractionType.Ping) {
-        res.status(200).json({ type: InteractionResponseType.Pong });
-        return;
-    }
-
-    if (interaction.type === InteractionType.MessageComponent) {
-        const customId = interaction.data.custom_id;
-
-        if (customId.startsWith('amp_start:')) {
-            // Defers immediately, then runs the AMP start and edits the reply (see handleAmpStart).
-            await handleAmpStart(interaction, res);
+        if (!verifyDiscordRequest(req, rawBody)) {
+            res.status(401).json({ error: 'Invalid request signature' });
             return;
         }
 
-        res.status(200).json({
-            type: InteractionResponseType.ChannelMessageWithSource,
-            data: { content: 'Unknown interaction', flags: EPHEMERAL }
-        });
-        return;
-    }
+        let interaction: APIInteraction;
+        try {
+            interaction = JSON.parse(rawBody) as APIInteraction;
+        } catch {
+            res.status(400).json({ error: 'Invalid JSON body' });
+            return;
+        }
 
-    if (interaction.type === InteractionType.ApplicationCommand) {
-        const commandData = interaction.data as APIChatInputApplicationCommandInteractionData;
+        if (interaction.type === InteractionType.Ping) {
+            res.status(200).json({ type: InteractionResponseType.Pong });
+            return;
+        }
 
-        if (commandData.name === 'token') {
-            // ACK immediately, then continue running to deliver the follow-up. On Vercel the
-            // function stays alive until this handler's promise resolves, so the await below runs.
+        if (interaction.type === InteractionType.MessageComponent) {
+            const customId = interaction.data.custom_id;
+
+            if (customId.startsWith('amp_start:')) {
+                // Defers immediately, then runs the AMP start and edits the reply (see handleAmpStart).
+                await handleAmpStart(interaction, res);
+                return;
+            }
+
             res.status(200).json({
-                type: InteractionResponseType.DeferredChannelMessageWithSource,
-                data: { flags: EPHEMERAL }
+                type: InteractionResponseType.ChannelMessageWithSource,
+                data: { content: 'Unknown interaction', flags: EPHEMERAL }
             });
-            await handleTokenFollowup(interaction);
             return;
         }
 
-        if (commandData.name === 'notify') {
-            const response = await handleNotify(interaction);
-            res.status(200).json(response);
+        if (interaction.type === InteractionType.ApplicationCommand) {
+            const commandData = interaction.data as APIChatInputApplicationCommandInteractionData;
+
+            if (commandData.name === 'token') {
+                // ACK immediately, then continue running to deliver the follow-up. On Vercel the
+                // function stays alive until this handler's promise resolves, so the await below runs.
+                res.status(200).json({
+                    type: InteractionResponseType.DeferredChannelMessageWithSource,
+                    data: { flags: EPHEMERAL }
+                });
+                await handleTokenFollowup(interaction);
+                return;
+            }
+
+            if (commandData.name === 'notify') {
+                const response = await handleNotify(interaction);
+                res.status(200).json(response);
+                return;
+            }
+
+            res.status(200).json({
+                type: InteractionResponseType.ChannelMessageWithSource,
+                data: { content: 'Unknown command', flags: EPHEMERAL }
+            });
             return;
         }
 
         res.status(200).json({
             type: InteractionResponseType.ChannelMessageWithSource,
-            data: { content: 'Unknown command', flags: EPHEMERAL }
+            data: { content: 'Unknown interaction type', flags: EPHEMERAL }
         });
-        return;
+    } catch (error) {
+        console.error('Unhandled error in interactions handler:', error instanceof Error ? error.message : error);
+        // The response may already have been sent (e.g. the token/AMP-start follow-up work throws
+        // after its ACK) — only send an error response if nothing went out yet.
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Internal server error' });
+        }
     }
-
-    res.status(200).json({
-        type: InteractionResponseType.ChannelMessageWithSource,
-        data: { content: 'Unknown interaction type', flags: EPHEMERAL }
-    });
 }

@@ -1,15 +1,8 @@
 import axios from 'axios';
 import supabase from '../lib/supabase';
-import Logger from '../lib/logger';
+import Logger, { errorToLogMetadata } from '../lib/logger';
 import { getAccessToken } from '../lib/blizzard';
 import { sendChannelMessage, deleteChannelMessage } from '../lib/discord';
-
-function errorToLogMetadata(error: unknown): Record<string, unknown> {
-    if (error instanceof Error) {
-        return { name: error.name, message: error.message, stack: error.stack };
-    }
-    return { error: String(error) };
-}
 
 interface ServerStatusSettings {
     channel_id: string | null;
