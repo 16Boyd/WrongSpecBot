@@ -18,21 +18,53 @@ interface DatabaseLogEntry {
     metadata: string;
 }
 
-interface LogSummary {
-    functionName: string;
-    startTime: string;
-    endTime: string;
-    duration: string;
-    totalLogs: number;
-    logLevels: Record<string, number>;
-}
-
 interface FlushResult {
     success: boolean;
     count: number;
     error?: string;
     skipped?: boolean;
     reason?: string;
+}
+
+// Minimal logging surface so helpers can accept either a Logger instance or plain console
+export interface LogLike {
+    info(message: string, metadata?: Record<string, unknown> | null): void;
+    warn(message: string, metadata?: Record<string, unknown> | null): void;
+    error(message: string, metadata?: Record<string, unknown> | null): void;
+}
+
+export const consoleLog: LogLike = {
+    info: (message, metadata) => console.log(message, metadata ?? ''),
+    warn: (message, metadata) => console.warn(message, metadata ?? ''),
+    error: (message, metadata) => console.error(message, metadata ?? '')
+};
+
+export function errorToLogMetadata(error: unknown): Record<string, unknown> {
+    if (error === null || error === undefined) {
+        return { error: null };
+    }
+
+    if (typeof error === 'string') {
+        return { error, message: error };
+    }
+
+    if (error instanceof Error) {
+        return {
+            name: error.name,
+            message: error.message,
+            stack: error.stack
+        };
+    }
+
+    if (typeof error === 'object') {
+        try {
+            return JSON.parse(JSON.stringify(error));
+        } catch {
+            return { error: String(error) };
+        }
+    }
+
+    return { error: String(error) };
 }
 
 class Logger {
@@ -149,22 +181,6 @@ class Logger {
         }
     }
 
-    public getLogSummary(): LogSummary {
-        const endTime = new Date();
-        const duration = endTime.getTime() - this.startTime.getTime();
-        
-        return {
-            functionName: this.functionName,
-            startTime: this.startTime.toISOString(),
-            endTime: endTime.toISOString(),
-            duration: `${duration}ms`,
-            totalLogs: this.logs.length,
-            logLevels: this.logs.reduce<Record<string, number>>((acc, log) => {
-                acc[log.level] = (acc[log.level] || 0) + 1;
-                return acc;
-            }, {})
-        };
-    }
 }
 
 export default Logger; 

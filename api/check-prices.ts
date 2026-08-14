@@ -1,6 +1,7 @@
 import { Client, GatewayIntentBits } from 'discord.js';
 import { checkPrices } from '../src/tasks/checkPrices';
 import Logger from '../src/lib/logger';
+import { checkCronAuth } from '../src/lib/cronAuth';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 // Initialize Discord client for notifications
@@ -37,33 +38,19 @@ export default async function handler(
         });
         
         // Check authorization: UptimeRobot user-agent OR Bearer token (from Cloudflare)
-        const userAgent = req.headers['user-agent'] || '';
-        const authHeader = req.headers['authorization'] || '';
-        const isUptimeRobot = userAgent.includes('UptimeRobot');
-        const isCloudflare = userAgent.includes('Cloudflare-Cron-Worker');
-        const hasValidToken = authHeader === `Bearer ${process.env.CRON_SECRET}`;
-        
-        logger.info('Authorization check', { 
-            userAgent,
-            isUptimeRobot,
-            isCloudflare,
-            hasAuthHeader: !!authHeader
-        });
-        
-        // Allow UptimeRobot OR valid Bearer token
-        if (!isUptimeRobot && !hasValidToken) {
+        const { authorized, authMethod } = checkCronAuth(req, logger);
+
+        if (!authorized) {
             logger.warn('Request unauthorized - not UptimeRobot and no valid token');
             await logger.flush();
-            res.status(401).json({ 
+            res.status(401).json({
                 message: 'Unauthorized',
                 timestamp: new Date().toISOString()
             });
             return;
         }
 
-        logger.info('Request authorized, starting price check...', {
-            authMethod: isUptimeRobot ? 'UptimeRobot' : 'Bearer Token'
-        });
+        logger.info('Request authorized, starting price check...', { authMethod });
         
         // Process synchronously to ensure logs are written
         try {

@@ -1,5 +1,6 @@
 import { checkServerStatus } from '../src/tasks/checkServerStatus';
 import Logger from '../src/lib/logger';
+import { checkCronAuth } from '../src/lib/cronAuth';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(
@@ -12,28 +13,19 @@ export default async function handler(
         logger.info('VERCEL SERVER-STATUS FUNCTION STARTED');
         
         // Check authorization: UptimeRobot or Bearer token
-        const userAgent = req.headers['user-agent'] || '';
-        const authHeader = req.headers['authorization'] || '';
-        const isUptimeRobot = userAgent.includes('UptimeRobot');
-        const hasValidToken = authHeader === `Bearer ${process.env.CRON_SECRET}`;
-        
-        logger.info('Authorization check', { 
-            userAgent,
-            isUptimeRobot,
-            hasAuthHeader: !!authHeader
-        });
-        
-        if (!isUptimeRobot && !hasValidToken) {
+        const { authorized, authMethod } = checkCronAuth(req, logger);
+
+        if (!authorized) {
             logger.warn('Request unauthorized');
             await logger.flush();
-            res.status(401).json({ 
+            res.status(401).json({
                 message: 'Unauthorized',
                 timestamp: new Date().toISOString()
             });
             return;
         }
 
-        logger.info('Request authorized, checking server status...');
+        logger.info('Request authorized, checking server status...', { authMethod });
         
         const result = await checkServerStatus();
         logger.info('Server status check completed', result as unknown as Record<string, unknown>);

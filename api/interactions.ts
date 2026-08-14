@@ -10,8 +10,8 @@ import {
     ApplicationCommandOptionType
 } from 'discord-api-types/v10';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import axios from 'axios';
-import supabase from '../src/lib/supabase';
+import { getAccessToken, getTokenPrice } from '../src/lib/blizzard';
+import { saveNotificationSettingsRow } from '../src/lib/notificationSettings';
 
 interface NotificationSettings {
     channelId: string;
@@ -21,197 +21,27 @@ interface NotificationSettings {
     lastNotified: string | null;
 }
 
-interface DatabaseNotificationSettings {
-    id: string;
-    channel_id: string;
-    sell_threshold: number;
-    hold_threshold: number;
-    last_action: string | null;
-    last_notified: string | null;
-    created_at: string;
-    updated_at: string;
-}
-
-// Blizzard API endpoints
-const API_ENDPOINTS: Record<string, string> = {
-    US: 'https://us.api.blizzard.com/data/wow/token/index',
-    EU: 'https://eu.api.blizzard.com/data/wow/token/index',
-    KR: 'https://kr.api.blizzard.com/data/wow/token/index',
-    TW: 'https://tw.api.blizzard.com/data/wow/token/index'
-};
-
-// Load notification settings from Supabase
-async function loadNotificationSettings(): Promise<NotificationSettings | null> {
-    try {
-        console.log('=== LOAD NOTIFICATION SETTINGS STARTED ===');
-        
-        const { data, error } = await supabase
-            .from('notification_settings')
-            .select('*')
-            .eq('id', 'default')
-            .single<DatabaseNotificationSettings>();
-        
-        if (error && error.code !== 'PGRST116') { // PGRST116 is "not found"
-            console.error('Error loading notification settings:', error);
-            return null;
-        }
-        
-        if (!data) {
-            console.log('No notification settings found');
-            return null;
-        }
-        
-        // Map database fields to expected format
-        const settings: NotificationSettings = {
-            channelId: data.channel_id,
-            sellThreshold: data.sell_threshold,
-            holdThreshold: data.hold_threshold,
-            lastAction: data.last_action,
-            lastNotified: data.last_notified
-        };
-        
-        console.log('Loaded notification settings:', JSON.stringify(settings, null, 2));
-        console.log('=== LOAD NOTIFICATION SETTINGS COMPLETED ===');
-        return settings;
-    } catch (error) {
-        console.error('=== LOAD NOTIFICATION SETTINGS ERROR ===');
-        console.error('Error loading notification settings:', error);
-        if (error instanceof Error) {
-            console.error('Error stack:', error.stack);
-        }
-        return null;
-    }
-}
-
-// Save notification settings to Supabase  
+// Save notification settings to Supabase
 async function saveNotificationSettings(settings: NotificationSettings): Promise<void> {
-    try {
-        console.log('=== SAVE NOTIFICATION SETTINGS STARTED ===');
-        console.log('Settings to save:', JSON.stringify(settings, null, 2));
-        
-        const now = new Date().toISOString();
-        
-        const { data, error } = await supabase
-            .from('notification_settings')
-            .upsert({
-                id: 'default',
-                channel_id: settings.channelId,
-                sell_threshold: settings.sellThreshold,
-                hold_threshold: settings.holdThreshold,
-                last_action: settings.lastAction || null,
-                last_notified: settings.lastNotified ? new Date(settings.lastNotified).toISOString() : null,
-                created_at: now,
-                updated_at: now
-            }, {
-                onConflict: 'id'
-            })
-            .select();
-        
-        if (error) {
-            console.error('Error saving notification settings:', error);
-            throw error;
-        }
-        
-        console.log('Notification settings saved successfully');
-        console.log('Saved data:', JSON.stringify(data, null, 2));
-        console.log('=== SAVE NOTIFICATION SETTINGS COMPLETED ===');
-    } catch (error) {
-        console.error('=== SAVE NOTIFICATION SETTINGS ERROR ===');
-        console.error('Error saving notification settings:', error);
-        if (error instanceof Error) {
-            console.error('Error stack:', error.stack);
-            console.error('Error message:', error.message);
-        }
-        throw error;
+    console.log('Saving notification settings:', JSON.stringify(settings, null, 2));
+
+    const now = new Date().toISOString();
+
+    const success = await saveNotificationSettingsRow({
+        channel_id: settings.channelId,
+        sell_threshold: settings.sellThreshold,
+        hold_threshold: settings.holdThreshold,
+        last_action: settings.lastAction || null,
+        last_notified: settings.lastNotified ? new Date(settings.lastNotified).toISOString() : null,
+        created_at: now,
+        updated_at: now
+    });
+
+    if (!success) {
+        throw new Error('Failed to save notification settings');
     }
-}
 
-interface AccessTokenResponse {
-    access_token: string;
-}
-
-// Get access token from Blizzard API
-async function getAccessToken(): Promise<string> {
-    try {
-        console.log('Getting access token...');
-        const response = await axios.post<AccessTokenResponse>('https://oauth.battle.net/token', null, {
-            params: {
-                grant_type: 'client_credentials'
-            },
-            auth: {
-                username: process.env.BLIZZARD_CLIENT_ID || '',
-                password: process.env.BLIZZARD_CLIENT_SECRET || ''
-            }
-        });
-        console.log('Access token received successfully');
-        return response.data.access_token;
-    } catch (error) {
-        if (axios.isAxiosError(error)) {
-            console.error('Error getting access token:', {
-                message: error.message,
-                response: error.response?.data,
-                status: error.response?.status,
-                headers: error.response?.headers
-            });
-        } else {
-            console.error('Error getting access token:', error);
-        }
-        throw new Error('Failed to get access token');
-    }
-}
-
-interface TokenResponse {
-    price: number;
-}
-
-// Get token price for a region
-async function getTokenPrice(region: string, accessToken: string): Promise<number> {
-    try {
-        console.log(`Getting token price for ${region}...`);
-        const url = API_ENDPOINTS[region];
-        if (!url) {
-            throw new Error(`Invalid region: ${region}`);
-        }
-
-        const params = {
-            namespace: `dynamic-${region.toLowerCase()}`,
-            locale: 'en_US',
-            access_token: accessToken
-        };
-        
-        console.log(`Fetching token price from ${url} with params:`, params);
-        
-        const response = await axios.get<TokenResponse>(url, { 
-            params,
-            headers: {
-                'Authorization': `Bearer ${accessToken}`
-            }
-        });
-        
-        console.log('API response:', {
-            status: response.status,
-            data: response.data
-        });
-
-        if (!response.data || !response.data.price) {
-            throw new Error(`Invalid response format: ${JSON.stringify(response.data)}`);
-        }
-        
-        // Convert from copper to gold (1 gold = 10000 copper)
-        return response.data.price / 10000;
-    } catch (error) {
-        if (axios.isAxiosError(error)) {
-            console.error(`Error getting token price for ${region}:`, {
-                message: error.message,
-                response: error.response?.data,
-                status: error.response?.status,
-                headers: error.response?.headers
-            });
-        } else {
-            console.error(`Error getting token price for ${region}:`, error);
-        }
-        throw new Error(`Failed to get token price for ${region}`);
-    }
+    console.log('Notification settings saved successfully');
 }
 
 interface VercelRequestWithRawBody extends VercelRequest {

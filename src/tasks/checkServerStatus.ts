@@ -1,14 +1,7 @@
 import { Client, GatewayIntentBits, TextChannel } from 'discord.js';
-import axios from 'axios';
 import supabase from '../lib/supabase';
-import Logger from '../lib/logger';
-
-function errorToLogMetadata(error: unknown): Record<string, unknown> {
-    if (error instanceof Error) {
-        return { name: error.name, message: error.message, stack: error.stack };
-    }
-    return { error: String(error) };
-}
+import Logger, { errorToLogMetadata } from '../lib/logger';
+import { getAccessToken, checkRealmStatus } from '../lib/blizzard';
 
 interface ServerStatusSettings {
     channel_id: string | null;
@@ -31,79 +24,6 @@ export interface CheckServerStatusResult {
         statusChanged: boolean;
     };
     error?: string;
-}
-
-async function getAccessToken(logger: Logger): Promise<string | null> {
-    try {
-        const response = await axios.post('https://oauth.battle.net/token', null, {
-            params: { grant_type: 'client_credentials' },
-            auth: {
-                username: process.env.BLIZZARD_CLIENT_ID || '',
-                password: process.env.BLIZZARD_CLIENT_SECRET || ''
-            },
-            timeout: 10000
-        });
-        return response.data.access_token;
-    } catch (error) {
-        logger.error('Failed to get access token', errorToLogMetadata(error));
-        return null;
-    }
-}
-
-async function checkRealmStatus(
-    realmName: string,
-    region: string,
-    accessToken: string,
-    logger: Logger
-): Promise<boolean> {
-    try {
-        const regionLower = region.toLowerCase();
-        const baseUrl = `https://${regionLower}.api.blizzard.com`;
-        
-        // Convert realm name to slug (lowercase, spaces to hyphens)
-        const realmSlug = realmName.toLowerCase().replace(/\s+/g, '-').replace(/'/g, '');
-        
-        logger.info(`Checking realm status for ${realmName} (slug: ${realmSlug})`);
-        
-        // Get the realm directly by slug
-        const realmResponse = await axios.get(`${baseUrl}/data/wow/realm/${realmSlug}`, {
-            params: {
-                namespace: `dynamic-${regionLower}`,
-                locale: 'en_US'
-            },
-            headers: { Authorization: `Bearer ${accessToken}` },
-            timeout: 15000
-        });
-        
-        // Extract connected realm ID from the href
-        const connectedRealmHref = realmResponse.data.connected_realm?.href;
-        if (!connectedRealmHref) {
-            logger.warn(`No connected realm found for ${realmName}`);
-            return false;
-        }
-        
-        // Get connected realm status
-        const connectedRealmResponse = await axios.get(connectedRealmHref, {
-            params: {
-                namespace: `dynamic-${regionLower}`,
-                locale: 'en_US'
-            },
-            headers: { Authorization: `Bearer ${accessToken}` },
-            timeout: 15000
-        });
-        
-        const status = connectedRealmResponse.data.status?.type;
-        logger.info(`Realm ${realmName} (${region}) status: ${status}`);
-        
-        return status === 'UP';
-    } catch (error) {
-        if (axios.isAxiosError(error) && error.response?.status === 404) {
-            logger.warn(`Realm "${realmName}" not found in ${region}`);
-        } else {
-            logger.warn(`Realm ${realmName} check failed`, errorToLogMetadata(error));
-        }
-        return false;
-    }
 }
 
 async function getSettings(logger: Logger): Promise<ServerStatusSettings | null> {
@@ -200,15 +120,19 @@ export async function checkServerStatus(): Promise<CheckServerStatusResult> {
             };
         }
         
-        const accessToken = await getAccessToken(logger);
-        if (!accessToken) {
+        let accessToken: string;
+        try {
+            accessToken = await getAccessToken(logger);
+        } catch (error) {
+            logger.error('Could not authenticate with Blizzard API', errorToLogMetadata(error));
+            await logger.flush();
             return {
                 success: false,
                 timestamp: new Date().toISOString(),
                 error: 'Could not authenticate with Blizzard API'
             };
         }
-        
+
         const isOnline = await checkRealmStatus(
             settings.watched_realm,
             settings.watched_realm_region,

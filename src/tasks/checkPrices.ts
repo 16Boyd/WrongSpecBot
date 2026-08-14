@@ -1,36 +1,7 @@
 import { Client, GatewayIntentBits, TextChannel, Message, BaseGuildTextChannel } from 'discord.js';
-import axios from 'axios';
-import supabase from '../lib/supabase';
-import Logger from '../lib/logger';
-
-// Utility function to safely convert unknown errors to logger metadata
-function errorToLogMetadata(error: unknown): Record<string, unknown> {
-    if (error === null || error === undefined) {
-        return { error: null };
-    }
-    
-    if (typeof error === 'string') {
-        return { error, message: error };
-    }
-    
-    if (error instanceof Error) {
-        return {
-            name: error.name,
-            message: error.message,
-            stack: error.stack
-        };
-    }
-    
-    if (typeof error === 'object') {
-        try {
-            return JSON.parse(JSON.stringify(error));
-        } catch {
-            return { error: String(error) };
-        }
-    }
-    
-    return { error: String(error) };
-}
+import Logger, { errorToLogMetadata } from '../lib/logger';
+import { getAccessToken, getTokenPrice } from '../lib/blizzard';
+import { loadNotificationSettingsRow, saveNotificationSettingsRow, DatabaseNotificationSettings } from '../lib/notificationSettings';
 
 // Utility function to safely convert objects to logger metadata
 function objectToLogMetadata(obj: unknown): Record<string, unknown> {
@@ -62,145 +33,19 @@ interface NotificationSettings {
     currentPrice: number | null;
 }
 
-interface DatabaseNotificationSettings {
-    id: string;
-    channel_id: string;
-    sell_threshold: number;
-    hold_threshold: number;
-    last_action: string | null;
-    last_notified: string | null;
-    message_id: string | null;
-    current_price: number | null;
-    created_at: string;
-    updated_at: string;
-}
-
 interface CheckPricesResult {
     success: boolean;
     timestamp: string;
     error?: string;
 }
 
-// Blizzard API endpoints
-const API_ENDPOINTS: Record<string, string> = {
-    US: 'https://us.api.blizzard.com/data/wow/token/index',
-    EU: 'https://eu.api.blizzard.com/data/wow/token/index',
-    KR: 'https://kr.api.blizzard.com/data/wow/token/index',
-    TW: 'https://tw.api.blizzard.com/data/wow/token/index'
-};
-
-interface AccessTokenResponse {
-    access_token: string;
-}
-
-// Get access token from Blizzard API
-async function getAccessToken(logger: Logger): Promise<string> {
-    try {
-        logger.info('Getting access token...');
-        const response = await axios.post<AccessTokenResponse>('https://oauth.battle.net/token', null, {
-            params: {
-                grant_type: 'client_credentials'
-            },
-            auth: {
-                username: process.env.BLIZZARD_CLIENT_ID || '',
-                password: process.env.BLIZZARD_CLIENT_SECRET || ''
-            }
-        });
-        logger.info('Access token received successfully');
-        return response.data.access_token;
-    } catch (error) {
-        if (axios.isAxiosError(error)) {
-            logger.error('Error getting access token', {
-                message: error.message,
-                response: error.response?.data,
-                status: error.response?.status,
-                headers: error.response?.headers
-            });
-        } else {
-            logger.error('Error getting access token', errorToLogMetadata(error));
-        }
-        throw new Error('Failed to get access token');
-    }
-}
-
-interface TokenResponse {
-    price: number;
-}
-
-// Get token price for a region
-async function getTokenPrice(region: string, accessToken: string, logger: Logger): Promise<number> {
-    try {
-        logger.info(`Getting token price for ${region}...`);
-        const url = API_ENDPOINTS[region];
-        if (!url) {
-            throw new Error(`Invalid region: ${region}`);
-        }
-
-        const params = {
-            namespace: `dynamic-${region.toLowerCase()}`,
-            locale: 'en_US',
-            access_token: accessToken
-        };
-        
-        logger.info(`Fetching token price from ${url}`, { params });
-        
-        const response = await axios.get<TokenResponse>(url, { 
-            params,
-            headers: {
-                'Authorization': `Bearer ${accessToken}`
-            }
-        });
-        
-        logger.info('API response received', {
-            status: response.status,
-            data: response.data
-        });
-
-        if (!response.data || !response.data.price) {
-            throw new Error(`Invalid response format: ${JSON.stringify(response.data)}`);
-        }
-        
-        // Convert from copper to gold (1 gold = 10000 copper)
-        return response.data.price / 10000;
-    } catch (error) {
-        if (axios.isAxiosError(error)) {
-            logger.error(`Error getting token price for ${region}`, {
-                message: error.message,
-                response: error.response?.data,
-                status: error.response?.status,
-                headers: error.response?.headers
-            });
-        } else {
-            logger.error(`Error getting token price for ${region}`, errorToLogMetadata(error));
-        }
-        throw new Error(`Failed to get token price for ${region}`);
-    }
-}
-
 // Load notification settings from Supabase
 async function loadNotificationSettings(logger: Logger): Promise<NotificationSettings> {
     try {
         logger.info('LOAD NOTIFICATION SETTINGS (CHECKPRICES) STARTED');
-        
-        const { data, error } = await supabase
-            .from('notification_settings')
-            .select('*')
-            .eq('id', 'default')
-            .single<DatabaseNotificationSettings>();
-        
-        if (error && error.code !== 'PGRST116') { // PGRST116 is "not found"
-            logger.error('Error loading notification settings', errorToLogMetadata(error));
-            return {
-                channelId: process.env.DEFAULT_CHANNEL_ID || '',
-                sellThreshold: 250000,
-                holdThreshold: 200000,
-                lastAction: null,
-                lastNotified: null,
-                messageId: null,
-                currentPrice: null
-            };
-        }
-        
+
+        const data = await loadNotificationSettingsRow(logger);
+
         if (!data) {
             logger.info('No notification settings found, using defaults');
             return {
@@ -271,9 +116,8 @@ async function updateNotificationState(
         logger.info('State to update', { action, messageId, currentPrice });
         
         const now = new Date().toISOString();
-        
-        const updateData: Partial<DatabaseNotificationSettings> & { id: string; updated_at: string } = {
-            id: 'default',
+
+        const updateData: Partial<Omit<DatabaseNotificationSettings, 'id'>> = {
             updated_at: now
         };
 
@@ -288,16 +132,10 @@ async function updateNotificationState(
         if (currentPrice !== undefined && currentPrice !== null) {
             updateData.current_price = currentPrice;
         }
-        
-        const { error } = await supabase
-            .from('notification_settings')
-            .upsert(updateData, {
-                onConflict: 'id'
-            });
-        
-        if (error) {
-            logger.error('Error updating notification state', errorToLogMetadata(error));
-        } else {
+
+        const success = await saveNotificationSettingsRow(updateData, logger);
+
+        if (success) {
             logger.info('Notification state updated successfully');
             logger.info('UPDATE NOTIFICATION STATE COMPLETED');
         }
@@ -314,30 +152,48 @@ async function updateNotificationState(
     }
 }
 
+// Create a temporary Discord client, run `action` against the resolved text channel, and
+// always destroy the client afterward. Returns undefined (and logs) if the channel can't be
+// resolved to a text channel; errors thrown by login/fetch/action propagate to the caller.
+async function withDiscordChannel<T>(
+    channelId: string,
+    logger: Logger,
+    action: (channel: BaseGuildTextChannel) => Promise<T>
+): Promise<T | undefined> {
+    const client = new Client({
+        intents: [
+            GatewayIntentBits.Guilds,
+            GatewayIntentBits.GuildMessages
+        ]
+    });
+
+    try {
+        await client.login(process.env.DISCORD_TOKEN);
+
+        const channel = await client.channels.fetch(channelId);
+        if (!(channel instanceof BaseGuildTextChannel)) {
+            logger.error(`Channel ${channelId} not found or not text-based`);
+            return undefined;
+        }
+
+        return await action(channel);
+    } finally {
+        try {
+            await client.destroy();
+        } catch (destroyError) {
+            logger.error('Error destroying client', errorToLogMetadata(destroyError));
+        }
+    }
+}
+
 // Send notification to Discord channel and return message ID
 async function sendNotificationToChannel(channelId: string, message: string, logger: Logger): Promise<string | undefined> {
     try {
-        // Create a temporary Discord client for sending messages
-        const client = new Client({
-            intents: [
-                GatewayIntentBits.Guilds,
-                GatewayIntentBits.GuildMessages
-            ]
-        });
-
-        await client.login(process.env.DISCORD_TOKEN);
-        
-        const channel = await client.channels.fetch(channelId);
-        if (channel instanceof BaseGuildTextChannel) {
+        return await withDiscordChannel(channelId, logger, async (channel) => {
             const sentMessage = await channel.send(message);
             logger.info(`Notification sent to channel ${channelId}`, { messageId: sentMessage.id });
-            await client.destroy();
-            return sentMessage.id; // Return the message ID
-        } else {
-            logger.error(`Channel ${channelId} not found or not text-based`);
-            await client.destroy();
-            return undefined;
-        }
+            return sentMessage.id;
+        });
     } catch (error) {
         if (error instanceof Error) {
             logger.error('Error sending notification', {
@@ -353,29 +209,14 @@ async function sendNotificationToChannel(channelId: string, message: string, log
 
 // Delete existing Discord message
 async function deleteDiscordMessage(channelId: string, messageId: string, logger: Logger): Promise<boolean> {
-    let client: Client | undefined;
     try {
-        client = new Client({
-            intents: [
-                GatewayIntentBits.Guilds,
-                GatewayIntentBits.GuildMessages
-            ]
-        });
-
-        await client.login(process.env.DISCORD_TOKEN);
-
-        const channel = await client.channels.fetch(channelId);
-        if (channel instanceof BaseGuildTextChannel) {
+        const deleted = await withDiscordChannel(channelId, logger, async (channel) => {
             const message = await channel.messages.fetch(messageId);
             await message.delete();
             logger.info(`Message ${messageId} deleted in channel ${channelId}`);
-            await client.destroy();
             return true;
-        } else {
-            logger.error(`Channel ${channelId} not found or not text-based`);
-            await client.destroy();
-            return false;
-        }
+        });
+        return deleted ?? false;
     } catch (error) {
         if (error instanceof Error) {
             logger.error('Error deleting message', {
@@ -390,13 +231,6 @@ async function deleteDiscordMessage(channelId: string, messageId: string, logger
                 channelId,
                 error
             });
-        }
-        try {
-            if (client) {
-                await client.destroy();
-            }
-        } catch (destroyError) {
-            logger.error('Error destroying client', errorToLogMetadata(destroyError));
         }
         return false;
     }
@@ -404,30 +238,14 @@ async function deleteDiscordMessage(channelId: string, messageId: string, logger
 
 // Edit existing Discord message
 async function editDiscordMessage(channelId: string, messageId: string, newMessage: string, logger: Logger): Promise<boolean> {
-    let client: Client | undefined;
     try {
-        // Create a temporary Discord client for editing messages
-        client = new Client({
-            intents: [
-                GatewayIntentBits.Guilds,
-                GatewayIntentBits.GuildMessages
-            ]
-        });
-
-        await client.login(process.env.DISCORD_TOKEN);
-        
-        const channel = await client.channels.fetch(channelId);
-        if (channel instanceof BaseGuildTextChannel) {
+        const edited = await withDiscordChannel(channelId, logger, async (channel) => {
             const message = await channel.messages.fetch(messageId);
             await message.edit(newMessage);
             logger.info(`Message ${messageId} edited in channel ${channelId}`);
-            await client.destroy();
             return true;
-        } else {
-            logger.error(`Channel ${channelId} not found or not text-based`);
-            await client.destroy();
-            return false;
-        }
+        });
+        return edited ?? false;
     } catch (error) {
         if (error instanceof Error) {
             logger.error('Error editing message', {
@@ -442,13 +260,6 @@ async function editDiscordMessage(channelId: string, messageId: string, newMessa
                 channelId,
                 error
             });
-        }
-        try {
-            if (client) {
-                await client.destroy();
-            }
-                    } catch (destroyError) {
-                logger.error('Error destroying client', errorToLogMetadata(destroyError));
         }
         return false;
     }
