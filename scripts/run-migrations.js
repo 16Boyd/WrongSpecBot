@@ -14,7 +14,8 @@ const { Client } = require('pg');
 const MIGRATION_FILES = [
     'supabase-setup.sql',
     'supabase-migration.sql',
-    'supabase-server-status.sql'
+    'supabase-server-status.sql',
+    'supabase-amp-status.sql'
 ];
 
 async function main() {
