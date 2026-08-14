@@ -1,15 +1,8 @@
 import supabase from '../lib/supabase';
-import Logger from '../lib/logger';
+import Logger, { errorToLogMetadata } from '../lib/logger';
 import { login, getAllInstances, getPlayerCount, appStateLabel, ampHostname, startServer, AmpInstance } from '../lib/amp';
 import { sendChannelMessage, editChannelMessage, deleteInteractionResponse, MessageBody } from '../lib/discord';
 import { buildAmpMessage, ampMessageSignature, DEFAULT_TEMPLATE, AMP_COLORS } from '../lib/ampMessage';
-
-function errorToLogMetadata(error: unknown): Record<string, unknown> {
-    if (error instanceof Error) {
-        return { name: error.name, message: error.message, stack: error.stack };
-    }
-    return { error: String(error) };
-}
 
 // One row per watched AMP instance. instance_id is the primary key.
 interface AmpStatusSettings {
@@ -143,8 +136,11 @@ async function processEphemeralCleanups(logger: Logger): Promise<void> {
         try {
             await deleteInteractionResponse(row.application_id, row.interaction_token);
         } catch (error) {
-            // Token expired or message already gone — log and still remove the record.
+            // Transient failure (rate limit, network blip, etc.) — leave the row for retry next
+            // tick instead of losing it. Discord interaction tokens expire after 15 minutes, so a
+            // permanently-gone message just stops mattering rather than retrying forever.
             logger.warn(`Could not delete ephemeral message (cleanup ${row.id})`, errorToLogMetadata(error));
+            continue;
         }
         await supabase.from('ephemeral_message_cleanup').delete().eq('id', row.id);
     }
@@ -208,8 +204,10 @@ async function processInstance(
     // If a start was requested recently and the server is still offline (hasn't begun booting
     // yet), leave the "Start Requested" message untouched until the grace window elapses.
     if (isOffline && startRequestedAt) {
-        const elapsedMs = Date.now() - Date.parse(startRequestedAt);
-        if (Number.isFinite(elapsedMs) && elapsedMs >= 0 && elapsedMs < START_REQUEST_GRACE_MS) {
+        // Clamp negative values: start_requested_at was written by a different serverless
+        // invocation, so a slightly-ahead writer clock shouldn't silently disable the grace window.
+        const elapsedMs = Math.max(0, Date.now() - Date.parse(startRequestedAt));
+        if (Number.isFinite(elapsedMs) && elapsedMs < START_REQUEST_GRACE_MS) {
             logger.info(
                 `Start requested ${Math.round(elapsedMs / 1000)}s ago for ${instance.FriendlyName} and still offline ` +
                 `— keeping "Start Requested" message (grace ${START_REQUEST_GRACE_MS / 1000}s)`

@@ -22,26 +22,28 @@ export default {
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     console.log('Cron triggered at:', new Date(event.scheduledTime).toISOString());
 
-    for (const endpoint of ENDPOINTS) {
-      try {
-        const url = env.VERCEL_BASE_URL + endpoint;
-        const response = await fetch(url, {
-          method: 'GET',
-          headers: {
-            'Authorization': 'Bearer ' + env.CRON_SECRET,
-            'User-Agent': 'Cloudflare-Cron-Worker',
-          },
-        });
+    await Promise.allSettled(
+      ENDPOINTS.map(async (endpoint) => {
+        try {
+          const url = env.VERCEL_BASE_URL + endpoint;
+          const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+              'Authorization': 'Bearer ' + env.CRON_SECRET,
+              'User-Agent': 'Cloudflare-Cron-Worker',
+            },
+          });
 
-        const data = await response.json();
-        console.log(endpoint + ' response:', response.status, JSON.stringify(data));
+          const data = await response.json();
+          console.log(endpoint + ' response:', response.status, JSON.stringify(data));
 
-        if (!response.ok) {
-          console.error(endpoint + ' failed:', response.status, data);
+          if (!response.ok) {
+            console.error(endpoint + ' failed:', response.status, data);
+          }
+        } catch (error) {
+          console.error('Error calling ' + endpoint + ':', error);
         }
-      } catch (error) {
-        console.error('Error calling ' + endpoint + ':', error);
-      }
-    }
+      })
+    );
   },
 };

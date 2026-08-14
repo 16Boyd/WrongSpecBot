@@ -18,6 +18,7 @@ ALTER TABLE notification_settings ENABLE ROW LEVEL SECURITY;
 -- NOTE: This policy grants full read/write to anyone holding the anon key. It provides no
 -- real protection on its own -- it relies on SUPABASE_ANON_KEY being kept server-side only
 -- (it is never shipped to a client in this project). Tighten to service_role if that changes.
+DROP POLICY IF EXISTS "Allow all operations on notification_settings" ON notification_settings;
 CREATE POLICY "Allow all operations on notification_settings"
 ON notification_settings
 FOR ALL
@@ -47,6 +48,7 @@ CREATE TABLE IF NOT EXISTS logs (
 ALTER TABLE logs ENABLE ROW LEVEL SECURITY;
 
 -- Create a policy to allow all operations on logs
+DROP POLICY IF EXISTS "Allow all operations on logs" ON logs;
 CREATE POLICY "Allow all operations on logs"
 ON logs
 FOR ALL

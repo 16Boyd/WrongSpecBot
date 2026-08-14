@@ -282,7 +282,9 @@ async function checkPrices(): Promise<CheckPricesResult> {
                     await updateNotificationState({ last_action: newAction, last_notified: new Date().toISOString(), current_price: price }, logger);
                 } else {
                     logger.warn('Failed to edit existing message - clearing stale message ID');
-                    await updateNotificationState({ message_id: null, current_price: price }, logger);
+                    // Also clear last_action so the next tick treats the current zone as newly
+                    // entered and posts a fresh alert instead of silently staying dark.
+                    await updateNotificationState({ message_id: null, last_action: null, current_price: price }, logger);
                 }
             }
         } else {

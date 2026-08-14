@@ -23,6 +23,7 @@ ALTER TABLE server_status_settings ENABLE ROW LEVEL SECURITY;
 
 -- NOTE: This policy grants full read/write to anyone holding the anon key. It relies on
 -- SUPABASE_ANON_KEY being kept server-side only (never shipped to a client in this project).
+DROP POLICY IF EXISTS "Allow all operations on server_status_settings" ON server_status_settings;
 CREATE POLICY "Allow all operations on server_status_settings"
 ON server_status_settings
 FOR ALL
