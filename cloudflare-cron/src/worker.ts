@@ -45,7 +45,7 @@ export default {
           // the message when only an Error object is passed, hiding e.g. a malformed VERCEL_BASE_URL.
           const name = error instanceof Error ? error.name : typeof error;
           const message = error instanceof Error ? error.message : String(error);
-          console.error(`Error calling ${endpoint} (url=${url}): ${name}: ${message}`);
+          console.error(`Error calling ${endpoint} (url=${url}): ${name}: ${message}`, error);
         }
       })
     );
