@@ -24,8 +24,8 @@ export default {
 
     await Promise.allSettled(
       ENDPOINTS.map(async (endpoint) => {
+        const url = env.VERCEL_BASE_URL + endpoint;
         try {
-          const url = env.VERCEL_BASE_URL + endpoint;
           const response = await fetch(url, {
             method: 'GET',
             headers: {
@@ -41,7 +41,11 @@ export default {
             console.error(endpoint + ' failed:', response.status, data);
           }
         } catch (error) {
-          console.error('Error calling ' + endpoint + ':', error);
+          // Log url, name, and message explicitly - Cloudflare's structured logging can drop
+          // the message when only an Error object is passed, hiding e.g. a malformed VERCEL_BASE_URL.
+          const name = error instanceof Error ? error.name : typeof error;
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`Error calling ${endpoint} (url=${url}): ${name}: ${message}`, error);
         }
       })
     );
