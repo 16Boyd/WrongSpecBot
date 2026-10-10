@@ -15,7 +15,8 @@ const MIGRATION_FILES = [
     'supabase-setup.sql',
     'supabase-migration.sql',
     'supabase-server-status.sql',
-    'supabase-amp-status.sql'
+    'supabase-amp-status.sql',
+    'supabase-token-alerts.sql'
 ];
 
 async function main() {

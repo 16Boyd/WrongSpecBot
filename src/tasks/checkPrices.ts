@@ -2,6 +2,16 @@ import supabase from '../lib/supabase';
 import Logger from '../lib/logger';
 import { getAccessToken, getTokenPriceInGold, REGIONS } from '../lib/blizzard';
 import { sendChannelMessage, editChannelMessage, deleteChannelMessage } from '../lib/discord';
+import {
+    evaluateAlert,
+    formatDeliveryMessage,
+    getActiveAlerts,
+    getPendingDeliveries,
+    markDeliveryFailed,
+    markDeliverySent,
+    sendDirectMessage,
+    TokenPriceAlert
+} from '../lib/tokenAlerts';
 
 // Utility function to safely convert unknown errors to logger metadata
 function errorToLogMetadata(error: unknown): Record<string, unknown> {
@@ -201,21 +211,95 @@ async function checkPrices(): Promise<CheckPricesResult> {
     try {
         logger.info('Starting price check...');
 
-        const accessToken = await getAccessToken();
         const settings = await loadNotificationSettings(logger);
+        let activeAlerts: TokenPriceAlert[] = [];
+        try {
+            activeAlerts = await getActiveAlerts();
+        } catch (error) {
+            logger.error('Could not load personal token alerts', errorToLogMetadata(error));
+        }
+
+        const region = (process.env.WATCH_REGION || 'US').toUpperCase();
+        if (settings.channelId && !REGIONS.includes(region)) {
+            throw new Error(`Invalid WATCH_REGION: ${region}`);
+        }
+        const regionsToFetch = new Set(activeAlerts.map(alert => alert.region));
+        if (settings.channelId) regionsToFetch.add(region);
+        const prices = new Map<string, number>();
+        if (regionsToFetch.size) {
+            try {
+                const accessToken = await getAccessToken();
+                for (const priceRegion of regionsToFetch) {
+                    if (!REGIONS.includes(priceRegion)) {
+                        logger.warn(`Skipping alert with invalid region: ${priceRegion}`);
+                        continue;
+                    }
+                    try {
+                        prices.set(priceRegion, await getTokenPriceInGold(priceRegion, accessToken));
+                    } catch (error) {
+                        // One region's API error must not block other regions, queued DMs,
+                        // or the existing shared watcher for its own region.
+                        logger.error(`Could not fetch WoW Token price for ${priceRegion}`, errorToLogMetadata(error));
+                    }
+                }
+            } catch (error) {
+                // Continue to drain already-queued DM events even if Blizzard auth is down.
+                logger.error('Could not authenticate with Blizzard for this price check', errorToLogMetadata(error));
+            }
+        }
+
+        // Each evaluation is a row-locked SQL transition that creates an outbox entry only
+        // for the single cron invocation that wins the trigger claim.
+        for (const alert of activeAlerts) {
+            const currentPrice = prices.get(alert.region);
+            if (currentPrice === undefined) continue;
+            try {
+                await evaluateAlert(alert.id, currentPrice);
+            } catch (error) {
+                logger.error('Could not evaluate personal token alert', { alertId: alert.id, ...errorToLogMetadata(error) });
+            }
+        }
+
+        // Claim outbox entries with a lease so parallel cron invocations cannot send the
+        // same queued event at once. A failed/blocked DM is marked and shown by /alert list.
+        try {
+            const deliveries = await getPendingDeliveries();
+            // Send serially so multiple alerts for one person do not burst their DM route.
+            for (const delivery of deliveries) {
+                try {
+                    await sendDirectMessage(delivery.discord_user_id, formatDeliveryMessage(delivery), delivery.id);
+                } catch (error) {
+                    const reason = error instanceof Error ? error.message : String(error);
+                    logger.error('Personal alert DM failed; alert remains active and will be visible in /alert list', { alertId: delivery.alert_id, ...errorToLogMetadata(error) });
+                    try {
+                        await markDeliveryFailed(delivery, reason);
+                    } catch (recordError) {
+                        logger.error('Could not record personal alert delivery failure', { alertId: delivery.alert_id, ...errorToLogMetadata(recordError) });
+                    }
+                    continue;
+                }
+
+                try {
+                    await markDeliverySent(delivery);
+                    logger.info('Personal alert DM sent', { alertId: delivery.alert_id, deliveryId: delivery.id });
+                } catch (error) {
+                    // Discord has already accepted the DM. Keep the row leased for recovery;
+                    // retrying immediately would risk sending a duplicate.
+                    logger.error('DM sent but delivery state could not be recorded', { alertId: delivery.alert_id, deliveryId: delivery.id, ...errorToLogMetadata(error) });
+                }
+            }
+        } catch (error) {
+            logger.error('Could not claim personal alert deliveries', errorToLogMetadata(error));
+        }
 
         if (!settings.channelId) {
-            logger.warn('No notification channel configured, skipping');
+            logger.info(activeAlerts.length ? 'Personal alerts checked; no shared channel is configured' : 'No shared channel or active personal alerts configured');
             await logger.flush();
             return { success: true, timestamp: new Date().toISOString() };
         }
 
-        const region = (process.env.WATCH_REGION || 'US').toUpperCase();
-        if (!REGIONS.includes(region)) {
-            throw new Error(`Invalid WATCH_REGION: ${region}`);
-        }
-
-        const price = await getTokenPriceInGold(region, accessToken);
+        const price = prices.get(region);
+        if (price === undefined) throw new Error(`Could not fetch the shared watcher price for ${region}`);
         logger.info(`Price check results for ${region}`, {
             currentPrice: price,
             previousPrice: settings.currentPrice,

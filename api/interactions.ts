@@ -15,6 +15,15 @@ import { waitUntil } from '@vercel/functions';
 import { startServer, ampHostname } from '../src/lib/amp';
 import { editChannelMessage } from '../src/lib/discord';
 import { buildAmpMessage, ampMessageSignature, DEFAULT_TEMPLATE, AMP_COLORS } from '../src/lib/ampMessage';
+import { REGIONS } from '../src/lib/blizzard';
+import {
+    createAlert,
+    ensureDirectMessageChannel,
+    getAlertResetPrice,
+    listAlerts,
+    removeAlert,
+    validateAlertInput
+} from '../src/lib/tokenAlerts';
 
 // Discord signs interactions over the exact raw request bytes. Disable Vercel's body
 // parser so we can verify the signature against those bytes instead of a re-serialized body.
@@ -98,6 +107,13 @@ async function editOriginalResponse(applicationId: string, interactionToken: str
     );
 }
 
+async function sendEphemeralFollowup(applicationId: string, interactionToken: string, content: string): Promise<void> {
+    await axios.post(
+        `https://discord.com/api/v10/webhooks/${applicationId}/${interactionToken}`,
+        { content, flags: EPHEMERAL, allowed_mentions: { parse: [] } }
+    );
+}
+
 // Handle /token. Discord requires a response within ~3s, so we ACK with a deferred
 // response first and deliver the actual price via a follow-up webhook edit.
 async function handleTokenFollowup(interaction: APIApplicationCommandInteraction): Promise<void> {
@@ -177,6 +193,121 @@ async function handleNotify(interaction: APIApplicationCommandInteraction) {
             type: InteractionResponseType.ChannelMessageWithSource,
             data: { content: 'Sorry, I encountered an error while setting up notifications.', flags: EPHEMERAL }
         };
+    }
+}
+
+function getAlertOption<T extends { name: string; value?: unknown }>(options: Array<{ name: string; options?: unknown[]; value?: unknown }>, name: string): T | undefined {
+    return options.find(option => option.name === name) as T | undefined;
+}
+
+function describeAlert(alert: Awaited<ReturnType<typeof listAlerts>>[number]): string {
+    const direction = alert.direction === 'above' ? 'at or above' : 'at or below';
+    const reset = getAlertResetPrice(alert);
+    const state = alert.armed
+        ? 'Waiting for target.'
+        : `Triggered; rearms at ${Math.round(reset).toLocaleString()} gold.`;
+    const deliveryNote = alert.last_delivery_error
+        ? ' Last DM failed; check your server DM settings.'
+        : '';
+    return `• \`${alert.id}\` — ${alert.region} ${direction} ${Number(alert.target_price).toLocaleString()} gold; reset gap ${alert.reset_gap_percent}%. ${state}${deliveryNote}`;
+}
+
+// All /alert operations are private and bind reads/writes to the signed interaction's user ID.
+async function handleAlertFollowup(interaction: APIApplicationCommandInteraction): Promise<void> {
+    const userId = interaction.member?.user?.id || interaction.user?.id;
+    const commandData = interaction.data as APIChatInputApplicationCommandInteractionData;
+    const subcommand = commandData.options?.[0] as { name: string; options?: Array<{ name: string; value?: unknown }> } | undefined;
+    if (!userId || !subcommand) {
+        await editOriginalResponse(interaction.application_id, interaction.token, 'Could not identify this alert request.');
+        return;
+    }
+
+    const options = subcommand.options || [];
+    try {
+        if (subcommand.name === 'set') {
+            const direction = getAlertOption<{ name: string; value: string }>(options, 'direction')?.value;
+            const targetPrice = getAlertOption<{ name: string; value: number }>(options, 'price')?.value;
+            const selectedRegion = getAlertOption<{ name: string; value: string }>(options, 'region')?.value;
+            const resetGap = getAlertOption<{ name: string; value: number }>(options, 'reset_gap')?.value;
+            const watchRegion = (process.env.WATCH_REGION || 'US').toUpperCase();
+            const region = (selectedRegion || (REGIONS.includes(watchRegion) ? watchRegion : 'US')).toUpperCase();
+            const resetGapPercent = resetGap ?? 3;
+
+            if (typeof targetPrice !== 'number' || typeof direction !== 'string') {
+                await editOriginalResponse(interaction.application_id, interaction.token, 'Missing required alert options.');
+                return;
+            }
+            const validationError = validateAlertInput({ region, direction, targetPrice, resetGapPercent });
+            if (validationError) {
+                await editOriginalResponse(interaction.application_id, interaction.token, validationError);
+                return;
+            }
+
+            // Verify that this bot can open a DM before persisting an alert that cannot be delivered.
+            await ensureDirectMessageChannel(userId);
+            const alert = await createAlert({
+                userId,
+                region,
+                direction: direction as 'above' | 'below',
+                targetPrice,
+                resetGapPercent
+            });
+            await editOriginalResponse(
+                interaction.application_id,
+                interaction.token,
+                `Personal alert created (${alert.id}). I’ll DM you when ${region} is ${direction === 'above' ? 'at or above' : 'at or below'} ${targetPrice.toLocaleString()} gold. It stays active until removed and rearms after a ${resetGapPercent}% move away.`
+            );
+            return;
+        }
+
+        if (subcommand.name === 'list') {
+            const alerts = await listAlerts(userId);
+            if (!alerts.length) {
+                await editOriginalResponse(interaction.application_id, interaction.token, 'You do not have any WoW Token alerts.');
+                return;
+            }
+
+            const chunks: string[] = [];
+            let chunk = 'Your WoW Token alerts:';
+            for (const alert of alerts) {
+                const line = describeAlert(alert);
+                if (chunk.length + line.length + 1 > 1900) {
+                    chunks.push(chunk);
+                    chunk = line;
+                } else {
+                    chunk += `\n${line}`;
+                }
+            }
+            chunks.push(chunk);
+            await editOriginalResponse(interaction.application_id, interaction.token, chunks[0]);
+            for (const followup of chunks.slice(1)) {
+                await sendEphemeralFollowup(interaction.application_id, interaction.token, followup);
+            }
+            return;
+        }
+
+        if (subcommand.name === 'remove') {
+            const alertId = getAlertOption<{ name: string; value: string }>(options, 'alert_id')?.value;
+            if (!alertId) {
+                await editOriginalResponse(interaction.application_id, interaction.token, 'Provide an alert ID from /alert list.');
+                return;
+            }
+            const removed = await removeAlert(userId, alertId);
+            await editOriginalResponse(
+                interaction.application_id,
+                interaction.token,
+                removed ? 'Alert removed. Its queued delivery data was also deleted.' : 'No alert with that ID belongs to you.'
+            );
+            return;
+        }
+
+        await editOriginalResponse(interaction.application_id, interaction.token, 'Unknown alert action.');
+    } catch (error) {
+        console.error('Error in alert command:', error instanceof Error ? error.message : error);
+        const message = error instanceof Error && error.message.includes('at most 10')
+            ? error.message
+            : 'Sorry, I could not complete that alert action. If DM delivery is blocked, enable DMs from this server and try again.';
+        await editOriginalResponse(interaction.application_id, interaction.token, message);
     }
 }
 
@@ -381,6 +512,15 @@ export default async function handler(
             if (commandData.name === 'notify') {
                 const response = await handleNotify(interaction);
                 res.status(200).json(response);
+                return;
+            }
+
+            if (commandData.name === 'alert') {
+                res.status(200).json({
+                    type: InteractionResponseType.DeferredChannelMessageWithSource,
+                    data: { flags: EPHEMERAL }
+                });
+                await handleAlertFollowup(interaction);
                 return;
             }
 

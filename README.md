@@ -26,6 +26,9 @@ messages in Discord. State (alert thresholds, channel/message IDs, instance conf
 
 - `/token [region]` - Get current WoW Token price for a specific region
 - `/notify <channel> <sell_threshold> <hold_threshold>` - Set up price alerts
+- `/alert set <direction> <price> [region] [reset_gap]` - Create a personal, recurring DM alert. Choose a reset gap from 1% to 10% (default 3%). An above alert triggers at or above its price and rearms at or below its reset level; a below alert triggers at or below its price and rearms at or above its reset level.
+- `/alert list` - View your alerts and their current armed or delivery status
+- `/alert remove <alert>` - Remove one of your personal alerts
 - `/ping` - Check if the bot is responsive
 
 ## Quick Start
@@ -80,8 +83,11 @@ Here's the high-level path; each step links to the detailed section below.
    `BLIZZARD_CLIENT_ID` and `BLIZZARD_CLIENT_SECRET` (needed for token prices and realm status).
 
 4. **Create your own Supabase project and run the SQL.** Follow [Supabase Setup](#3-supabase-setup).
-   Run `supabase-setup.sql`, `supabase-server-status.sql`, and `supabase-amp-status.sql` to create all
-   the tables. Copy your `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
+   Run `supabase-setup.sql`, `supabase-server-status.sql`, `supabase-amp-status.sql`, and
+   `supabase-token-alerts.sql` to create all
+   the tables. Copy your `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`.
+   The service role key is required for private alert storage; keep it in server-side environment
+   variables only and never expose it in a client or public repository.
 
 5. **Deploy your fork to Vercel.** Follow [Vercel Deployment](#4-vercel-deployment): import **your
    forked repo** (not the original), add all the environment variables, and deploy. Your bot's public
@@ -93,7 +99,7 @@ Here's the high-level path; each step links to the detailed section below.
    set correctly in Vercel.
 
 7. **Register the slash commands.** From a local clone of your fork with the same env vars in a `.env`
-   file, run `npm install` then `npm run deploy`. This registers `/token`, `/notify`, and `/ping`
+   file, run `npm install` then `npm run deploy`. This registers `/token`, `/notify`, `/alert`, and `/ping`
    with Discord.
 
 8. **Set up the scheduler.** Follow [Cloudflare Worker Setup](#5-cloudflare-worker-cron-setup). Set
@@ -268,6 +274,7 @@ BLIZZARD_CLIENT_ID=your_blizzard_client_id
 BLIZZARD_CLIENT_SECRET=your_blizzard_client_secret
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 CRON_SECRET=a_long_random_shared_secret
 AUTHORIZED_USERS=comma_separated_discord_user_ids
 DEFAULT_CHANNEL_ID=optional_fallback_channel_id
@@ -430,6 +437,8 @@ BLIZZARD_CLIENT_SECRET=your_blizzard_client_secret_here
 # Supabase Configuration
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your_supabase_anon_key_here
+# Server-side only. Required for private personal alert records; never expose to clients.
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key_here
 
 # Cron authentication (shared secret between the Cloudflare Worker and the API endpoints)
 CRON_SECRET=a_long_random_shared_secret
@@ -461,7 +470,9 @@ AMP_INSECURE_TLS=true
 ### Test Discord Bot
 
 1. Use `/token` to test Blizzard API integration
-2. Use `/notify` to test Supabase integration
+2. Use `/notify` to configure the shared channel update
+3. Use `/alert set region:US direction:above price:250000 reset_gap:3` to create a personal DM alert
+4. Use `/alert list` and `/alert remove` to manage your own alerts
 
 ### Test API Endpoints
 
@@ -524,4 +535,4 @@ AMP_INSECURE_TLS=true
 
 ## 📄 License
 
-This project is licensed under the ISC License - see the [LICENSE](./WrongSpecBot/LICENSE) file for details. 
+This project is licensed under the ISC License - see the [LICENSE](./WrongSpecBot/LICENSE) file for details.

@@ -1,6 +1,6 @@
 # Privacy Policy - WrongSpecBot
 
-**Last Updated: [DATE]**
+**Last Updated: 2026-10-10**
 
 ## 1. Introduction
 
@@ -34,6 +34,8 @@ When you use the Bot, we automatically collect:
   - WoW Token price thresholds (sell/hold prices)
   - Notification channel preferences
   - Preferred regions for price tracking
+  - Personal token alert regions, target prices, above/below direction, reset gaps, and whether each alert is armed or waiting to reset
+  - Alert trigger and DM delivery status needed to prevent duplicate notifications and show delivery failures
 
 - **Configuration Settings**:
   - Bot permission levels
@@ -41,8 +43,9 @@ When you use the Bot, we automatically collect:
 
 ### 2.3 Information We Do NOT Collect
 
+We do not read or store the contents of private Discord messages or DMs. When you configure a personal alert, we store your Discord user ID and alert settings so the Bot can send you a DM when the price condition is met.
+
 We do not collect:
-- Private Discord messages or DMs
 - Personal information (real names, addresses, phone numbers)
 - Financial information or payment data
 - Voice data or audio recordings
@@ -55,6 +58,7 @@ We do not collect:
 We use your information to:
 - Provide WoW Token price notifications and alerts
 - Send price threshold notifications to designated Discord channels
+- Send personal threshold alerts by Discord DM, rearm recurring alerts after the selected price gap is reached, and show their delivery status to the owner
 - Ensure the Bot functions correctly in your server
 
 ### 3.2 Secondary Uses
@@ -91,7 +95,7 @@ We implement appropriate security measures including:
 
 ### 4.3 Data Retention
 
-- **User Request**: Data can be deleted immediately upon user request
+- Personal alert settings and their delivery records remain while the alert is active. Removing an alert deletes that alert and its associated records. Users can remove alerts with `/alert remove` or request deletion of their stored data through the contact method in this policy.
 
 ## 5. Data Sharing and Third Parties
 
@@ -101,7 +105,7 @@ The Bot relies on the following third-party services:
 
 - **Discord API**: 
   - Purpose: Bot functionality and server integration
-  - Data Shared: Server IDs, Channel IDs, User IDs, command interactions
+  - Data Shared: Server IDs, Channel IDs, User IDs, command interactions, and personal alert messages sent by the Bot as DMs
   - Privacy Policy: [https://discord.com/privacy](https://discord.com/privacy)
 
 - **Blizzard Entertainment API**:
@@ -111,7 +115,7 @@ The Bot relies on the following third-party services:
 
 - **Supabase**:
   - Purpose: Database storage for user preferences
-  - Data Shared: Notification settings, server configurations
+  - Data Shared: Notification settings, personal alert preferences and delivery status, server configurations
   - Privacy Policy: [https://supabase.com/privacy](https://supabase.com/privacy)
 
 ### 5.2 No Data Sales
@@ -198,4 +202,4 @@ For Discord server administrators who need a Data Processing Agreement (DPA) for
 
 ---
 
-**This Privacy Policy is effective as of 2025-06-24 and governs the privacy practices of WrongSpecBot. By using the Bot, you acknowledge that you have read and understood this Privacy Policy.** 
+**This Privacy Policy is effective as of 2025-06-24 and governs the privacy practices of WrongSpecBot. By using the Bot, you acknowledge that you have read and understood this Privacy Policy.**

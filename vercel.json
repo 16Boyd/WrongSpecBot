@@ -3,7 +3,7 @@
   "buildCommand": "node scripts/run-migrations.js",
   "outputDirectory": null,
   "installCommand": "npm install",
-  "ignoreCommand": "git diff HEAD^ HEAD --quiet -- api/ src/ package.json vercel.json scripts/ supabase-setup.sql supabase-migration.sql supabase-server-status.sql supabase-amp-status.sql",
+  "ignoreCommand": "git diff HEAD^ HEAD --quiet -- api/ src/ package.json vercel.json scripts/ supabase-setup.sql supabase-migration.sql supabase-server-status.sql supabase-amp-status.sql supabase-token-alerts.sql",
   "functions": {
     "api/**/*.ts": {
       "maxDuration": 300
@@ -31,4 +31,4 @@
       "dest": "/api/index.ts"
     }
   ]
-} 
+}
