@@ -130,8 +130,8 @@ async function handleTokenFollowup(interaction: APIApplicationCommandInteraction
     }
 }
 
-// Handle /notify. Fast single DB write, so we respond synchronously.
-async function handleNotify(interaction: APIApplicationCommandInteraction) {
+// Handle /notify after acknowledging the interaction.
+async function handleNotify(interaction: APIApplicationCommandInteraction): Promise<string> {
     const commandData = interaction.data as APIChatInputApplicationCommandInteractionData;
 
     // Authorize by immutable Discord user ID (usernames are mutable and not unique).
@@ -140,39 +140,24 @@ async function handleNotify(interaction: APIApplicationCommandInteraction) {
 
     if (!userId || !authorizedUsers.includes(userId)) {
         // Do not disclose the authorized-user list to unauthorized callers.
-        return {
-            type: InteractionResponseType.ChannelMessageWithSource,
-            data: { content: 'You are not authorized to use this command.', flags: EPHEMERAL }
-        };
+        return 'You are not authorized to use this command.';
     }
 
     const options = commandData.options || [];
     const channelOption = options.find(o => o.name === 'channel') as CommandStringOption | undefined;
 
     if (!channelOption) {
-        return {
-            type: InteractionResponseType.ChannelMessageWithSource,
-            data: { content: 'Missing required options.', flags: EPHEMERAL }
-        };
+        return 'Missing required options.';
     }
 
     const channel = channelOption.value;
 
     try {
         await saveNotificationSettings({ channelId: channel });
-        return {
-            type: InteractionResponseType.ChannelMessageWithSource,
-            data: {
-                content: `Token price status set up successfully. Rolling four-week and 52-week ranges will be posted in <#${channel}>.`,
-                flags: EPHEMERAL
-            }
-        };
+        return `Token price status set up successfully. Rolling four-week and 52-week ranges will be posted in <#${channel}>.`;
     } catch (error) {
         console.error('Error in notify command:', error instanceof Error ? error.message : error);
-        return {
-            type: InteractionResponseType.ChannelMessageWithSource,
-            data: { content: 'Sorry, I encountered an error while setting up notifications.', flags: EPHEMERAL }
-        };
+        return 'Sorry, I encountered an error while setting up notifications.';
     }
 }
 
@@ -375,8 +360,13 @@ export default async function handler(
             }
 
             if (commandData.name === 'notify') {
-                const response = await handleNotify(interaction);
-                res.status(200).json(response);
+                // ACK immediately, then edit the original response with the result.
+                res.status(200).json({
+                    type: InteractionResponseType.DeferredChannelMessageWithSource,
+                    data: { flags: EPHEMERAL }
+                });
+                const content = await handleNotify(interaction);
+                await editOriginalResponse(interaction.application_id, interaction.token, content);
                 return;
             }
 
