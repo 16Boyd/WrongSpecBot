@@ -66,9 +66,10 @@ async function saveNotificationSettings(settings: {
         .select('channel_id, message_id')
         .eq('id', 'default')
         .maybeSingle();
-    if (previous?.channel_id && previous?.message_id) {
+    const previousChannelId = previous?.channel_id || process.env.DEFAULT_CHANNEL_ID;
+    if (previousChannelId && previous?.message_id) {
         try {
-            await deleteChannelMessage(previous.channel_id, previous.message_id);
+            await deleteChannelMessage(previousChannelId, previous.message_id);
         } catch (error) {
             console.warn('Could not remove previous token status message during reconfiguration:', error instanceof Error ? error.message : error);
         }
