@@ -8,13 +8,12 @@ notifications and alerts.
 WrongSpecBot runs as a set of **serverless endpoints on Vercel** that respond to Discord slash
 commands and button clicks. A **Cloudflare Worker** triggers the bot on a schedule (every minute
 by default) to check prices, realm status, and AMP game-server status, then posts or edits
-messages in Discord. State (alert thresholds, channel/message IDs, instance config) is stored in
-**Supabase**.
+messages in Discord. Settings and sampled token-price history are stored in **Supabase**.
 
 ## Features
 
 - 📊 Real-time WoW Token price tracking
-- 🔔 Customizable price threshold notifications
+- 🔔 Rolling four-week and 52-week token highs/lows and price position
 - 🌍 Multi-region support for the `/token` command (US, EU, KR, TW); automated alerts track one configurable region (`WATCH_REGION`, default US)
 - 🖧 WoW realm up/down status monitoring, reported to a Discord channel
 - ⚡ Automatic price/status checking on a schedule (driven by a Cloudflare Worker cron)
@@ -25,7 +24,7 @@ messages in Discord. State (alert thresholds, channel/message IDs, instance conf
 ## Available Commands
 
 - `/token [region]` - Get current WoW Token price for a specific region
-- `/notify <channel> <sell_threshold> <hold_threshold>` - Set up price alerts
+- `/notify <channel>` - Set up the rolling token price status message
 - `/ping` - Check if the bot is responsive
 
 ## Quick Start
@@ -79,9 +78,8 @@ Here's the high-level path; each step links to the detailed section below.
 3. **Get Blizzard API credentials.** Follow [Blizzard API Setup](#2-blizzard-api-setup) for
    `BLIZZARD_CLIENT_ID` and `BLIZZARD_CLIENT_SECRET` (needed for token prices and realm status).
 
-4. **Create your own Supabase project and run the SQL.** Follow [Supabase Setup](#3-supabase-setup).
-   Run `supabase-setup.sql`, `supabase-server-status.sql`, and `supabase-amp-status.sql` to create all
-   the tables. Copy your `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
+4. **Create your own Supabase project.** Follow [Supabase Setup](#3-supabase-setup). Copy your
+   `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and direct database connection string.
 
 5. **Deploy your fork to Vercel.** Follow [Vercel Deployment](#4-vercel-deployment): import **your
    forked repo** (not the original), add all the environment variables, and deploy. Your bot's public
@@ -117,7 +115,9 @@ Here's the high-level path; each step links to the detailed section below.
   git fetch upstream
   git merge upstream/main
   ```
-  Re-run any new SQL migrations in your Supabase project after merging.
+  Production Vercel builds apply the repository's idempotent SQL migrations automatically. Keep
+  `POSTGRES_URL_NON_POOLING` configured in Vercel so a regular production deploy can update the
+  schema and seed token history; no manual SQL migration is needed after updates.
 - **Costs.** Vercel, Supabase, and Cloudflare Workers all have free tiers that comfortably cover a
   personal bot. Blizzard's API is free for this usage.
 
@@ -213,22 +213,17 @@ Here's the high-level path; each step links to the detailed section below.
    - **Region**: Choose closest to your users (e.g., US East)
 6. Click **"Create new project"**
 
-### Step 2: Set Up Database
-
-1. Wait for project creation to complete
-2. Go to **"SQL Editor"** in the left sidebar
-3. Copy the contents of `supabase-setup.sql` from this repository
-4. Paste into the SQL editor and click **"Run"**
-5. Repeat for `supabase-server-status.sql` (realm status) and `supabase-amp-status.sql` (AMP instance status) to create those tables
-
-### Step 3: Get Project Credentials
+### Step 2: Get Project Credentials
 
 1. Go to **"Settings"** → **"API"** in the left sidebar
 2. Copy these values:
    - **Project URL**: `https://your-project.supabase.co`
    - **Anon/Public Key**: `eyJ...` (long string starting with eyJ)
+   - **Direct connection string**: use the non-pooling PostgreSQL connection URI for
+     `POSTGRES_URL_NON_POOLING` in Vercel. The production build applies all schema files, including
+     the price-history table, automatically.
 
-### Step 4: Configure Row Level Security (Optional but Recommended)
+### Step 3: Configure Row Level Security (Optional but Recommended)
 
 1. Go to **"Authentication"** → **"Policies"**
 2. The setup script already includes basic policies
@@ -283,6 +278,14 @@ AMP_INSECURE_TLS=true   # only if AMP uses a self-signed HTTPS certificate
 1. Click **"Deploy"**
 2. Wait for deployment to complete
 3. Your bot API will be available at `https://your-project.vercel.app`
+
+The production build runs idempotent database migrations and attempts a one-time rolling-year
+historical import from [wowtoken.app](https://wowtoken.app/) for US, EU, KR, and TW. The import uses
+timestamped community tracker samples, labels them separately from live Blizzard observations, and
+retries on a later deploy if a region's source feed is unavailable. Live prices continue to come
+from Blizzard. Historical feeds are sampled and may omit price changes; the displayed extrema are
+based on available observations, not guaranteed to include every market tick. New live observations
+are retained for one year, with older rows pruned automatically.
 
 ### Step 5: Scheduling
 
@@ -524,4 +527,4 @@ AMP_INSECURE_TLS=true
 
 ## 📄 License
 
-This project is licensed under the ISC License - see the [LICENSE](./WrongSpecBot/LICENSE) file for details. 
+This project is licensed under the ISC License - see the [LICENSE](./WrongSpecBot/LICENSE) file for details.

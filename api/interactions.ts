@@ -13,7 +13,7 @@ import supabase from '../src/lib/supabase';
 import { getAccessToken, getTokenPriceInGold } from '../src/lib/blizzard';
 import { waitUntil } from '@vercel/functions';
 import { startServer, ampHostname } from '../src/lib/amp';
-import { editChannelMessage } from '../src/lib/discord';
+import { editChannelMessage, deleteChannelMessage } from '../src/lib/discord';
 import { buildAmpMessage, ampMessageSignature, DEFAULT_TEMPLATE, AMP_COLORS } from '../src/lib/ampMessage';
 
 // Discord signs interactions over the exact raw request bytes. Disable Vercel's body
@@ -25,11 +25,6 @@ const EPHEMERAL = 64;
 interface CommandStringOption {
     name: string;
     value: string;
-}
-
-interface CommandNumberOption {
-    name: string;
-    value: number;
 }
 
 async function readRawBody(req: VercelRequest): Promise<string> {
@@ -65,18 +60,29 @@ function verifyDiscordRequest(req: VercelRequest, rawBody: string): boolean {
 // Save notification settings to Supabase (used by /notify).
 async function saveNotificationSettings(settings: {
     channelId: string;
-    sellThreshold: number;
-    holdThreshold: number;
 }): Promise<void> {
+    const { data: previous } = await supabase
+        .from('notification_settings')
+        .select('channel_id, message_id')
+        .eq('id', 'default')
+        .maybeSingle();
+    if (previous?.channel_id && previous?.message_id) {
+        try {
+            await deleteChannelMessage(previous.channel_id, previous.message_id);
+        } catch (error) {
+            console.warn('Could not remove previous token status message during reconfiguration:', error instanceof Error ? error.message : error);
+        }
+    }
+
     const { error } = await supabase
         .from('notification_settings')
         .upsert({
             id: 'default',
             channel_id: settings.channelId,
-            sell_threshold: settings.sellThreshold,
-            hold_threshold: settings.holdThreshold,
             // Reset alert state so reconfiguring starts fresh (no stale message to edit).
             last_action: null,
+            last_status_signature: null,
+            last_message_signature: null,
             last_notified: null,
             message_id: null,
             current_price: null,
@@ -140,34 +146,23 @@ async function handleNotify(interaction: APIApplicationCommandInteraction) {
     }
 
     const options = commandData.options || [];
-    const sellThresholdOption = options.find(o => o.name === 'sell_threshold') as CommandNumberOption | undefined;
-    const holdThresholdOption = options.find(o => o.name === 'hold_threshold') as CommandNumberOption | undefined;
     const channelOption = options.find(o => o.name === 'channel') as CommandStringOption | undefined;
 
-    if (!sellThresholdOption || !holdThresholdOption || !channelOption) {
+    if (!channelOption) {
         return {
             type: InteractionResponseType.ChannelMessageWithSource,
             data: { content: 'Missing required options.', flags: EPHEMERAL }
         };
     }
 
-    const sellThreshold = sellThresholdOption.value;
-    const holdThreshold = holdThresholdOption.value;
     const channel = channelOption.value;
 
-    if (sellThreshold <= holdThreshold) {
-        return {
-            type: InteractionResponseType.ChannelMessageWithSource,
-            data: { content: 'Sell threshold must be higher than hold threshold.', flags: EPHEMERAL }
-        };
-    }
-
     try {
-        await saveNotificationSettings({ channelId: channel, sellThreshold, holdThreshold });
+        await saveNotificationSettings({ channelId: channel });
         return {
             type: InteractionResponseType.ChannelMessageWithSource,
             data: {
-                content: `Notifications set up successfully!\nSell threshold: ${sellThreshold.toLocaleString()} gold\nHold threshold: ${holdThreshold.toLocaleString()} gold\nNotifications will be sent to <#${channel}>`,
+                content: `Token price status set up successfully. Rolling four-week and 52-week ranges will be posted in <#${channel}>.`,
                 flags: EPHEMERAL
             }
         };
