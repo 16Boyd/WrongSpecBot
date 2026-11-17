@@ -365,8 +365,13 @@ export default async function handler(
                     type: InteractionResponseType.DeferredChannelMessageWithSource,
                     data: { flags: EPHEMERAL }
                 });
-                const content = await handleNotify(interaction);
-                await editOriginalResponse(interaction.application_id, interaction.token, content);
+                waitUntil(
+                    handleNotify(interaction)
+                        .then(content => editOriginalResponse(interaction.application_id, interaction.token, content))
+                        .catch(error =>
+                            console.error('Notify follow-up failed:', error instanceof Error ? error.message : error)
+                        )
+                );
                 return;
             }
 
