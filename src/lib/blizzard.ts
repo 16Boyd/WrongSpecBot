@@ -16,6 +16,12 @@ interface AccessTokenResponse {
 
 interface TokenResponse {
     price: number;
+    last_updated_timestamp?: number;
+}
+
+export interface TokenQuote {
+    priceCopper: number;
+    sourceUpdatedAt: string | null;
 }
 
 // Fetch an OAuth client-credentials access token from Blizzard.
@@ -44,8 +50,9 @@ export async function getAccessToken(): Promise<string> {
     }
 }
 
-// Fetch the current WoW Token price for a region, in gold.
-export async function getTokenPriceInGold(region: string, accessToken: string): Promise<number> {
+// Fetch the current WoW Token quote for a region. Keep the API's copper value intact for
+// historical calculations; the source timestamp identifies repeated reads of the same quote.
+export async function getTokenQuote(region: string, accessToken: string): Promise<TokenQuote> {
     const url = API_ENDPOINTS[region];
     if (!url) {
         throw new Error(`Invalid region: ${region}`);
@@ -62,13 +69,18 @@ export async function getTokenPriceInGold(region: string, accessToken: string): 
             timeout: 15000
         });
 
-        const price = response.data?.price;
-        if (typeof price !== 'number') {
+        const priceCopper = response.data?.price;
+        if (typeof priceCopper !== 'number' || !Number.isSafeInteger(priceCopper) || priceCopper <= 0) {
             throw new Error(`Invalid response format: ${JSON.stringify(response.data)}`);
         }
 
-        // Convert from copper to gold (1 gold = 10000 copper)
-        return price / 10000;
+        const timestamp = response.data.last_updated_timestamp;
+        return {
+            priceCopper,
+            sourceUpdatedAt: typeof timestamp === 'number' && Number.isFinite(timestamp)
+                ? new Date(timestamp).toISOString()
+                : null
+        };
     } catch (error) {
         if (axios.isAxiosError(error)) {
             console.error(`Error getting token price for ${region}:`, {
@@ -81,4 +93,11 @@ export async function getTokenPriceInGold(region: string, accessToken: string): 
         }
         throw new Error(`Failed to get token price for ${region}`);
     }
+}
+
+// Fetch the current WoW Token price for a region, in gold.
+export async function getTokenPriceInGold(region: string, accessToken: string): Promise<number> {
+    const quote = await getTokenQuote(region, accessToken);
+    // Convert from copper to gold (1 gold = 10000 copper).
+    return quote.priceCopper / 10000;
 }

@@ -2,17 +2,7 @@ import { SlashCommandBuilder, ChatInputCommandInteraction, ChannelType } from 'd
 
 export const data = new SlashCommandBuilder()
     .setName('notify')
-    .setDescription('Set up guild-wide token price notifications')
-    .addIntegerOption(option =>
-        option.setName('sell_threshold')
-            .setDescription('Price threshold to notify when token price is high enough to sell')
-            .setRequired(true)
-            .setMinValue(1))
-    .addIntegerOption(option =>
-        option.setName('hold_threshold')
-            .setDescription('Price threshold to notify when token price is low enough to buy')
-            .setRequired(true)
-            .setMinValue(1))
+    .setDescription('Set up the rolling WoW Token price status message')
     .addChannelOption(option =>
         option.setName('channel')
             .setDescription('Channel to send notifications to')

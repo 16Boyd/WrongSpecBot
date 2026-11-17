@@ -13,7 +13,7 @@ import supabase from '../src/lib/supabase';
 import { getAccessToken, getTokenPriceInGold } from '../src/lib/blizzard';
 import { waitUntil } from '@vercel/functions';
 import { startServer, ampHostname } from '../src/lib/amp';
-import { editChannelMessage } from '../src/lib/discord';
+import { editChannelMessage, deleteChannelMessage } from '../src/lib/discord';
 import { buildAmpMessage, ampMessageSignature, DEFAULT_TEMPLATE, AMP_COLORS } from '../src/lib/ampMessage';
 
 // Discord signs interactions over the exact raw request bytes. Disable Vercel's body
@@ -25,11 +25,6 @@ const EPHEMERAL = 64;
 interface CommandStringOption {
     name: string;
     value: string;
-}
-
-interface CommandNumberOption {
-    name: string;
-    value: number;
 }
 
 async function readRawBody(req: VercelRequest): Promise<string> {
@@ -65,18 +60,30 @@ function verifyDiscordRequest(req: VercelRequest, rawBody: string): boolean {
 // Save notification settings to Supabase (used by /notify).
 async function saveNotificationSettings(settings: {
     channelId: string;
-    sellThreshold: number;
-    holdThreshold: number;
 }): Promise<void> {
+    const { data: previous } = await supabase
+        .from('notification_settings')
+        .select('channel_id, message_id')
+        .eq('id', 'default')
+        .maybeSingle();
+    const previousChannelId = previous?.channel_id || process.env.DEFAULT_CHANNEL_ID;
+    if (previousChannelId && previous?.message_id) {
+        try {
+            await deleteChannelMessage(previousChannelId, previous.message_id);
+        } catch (error) {
+            console.warn('Could not remove previous token status message during reconfiguration:', error instanceof Error ? error.message : error);
+        }
+    }
+
     const { error } = await supabase
         .from('notification_settings')
         .upsert({
             id: 'default',
             channel_id: settings.channelId,
-            sell_threshold: settings.sellThreshold,
-            hold_threshold: settings.holdThreshold,
             // Reset alert state so reconfiguring starts fresh (no stale message to edit).
             last_action: null,
+            last_status_signature: null,
+            last_message_signature: null,
             last_notified: null,
             message_id: null,
             current_price: null,
@@ -123,8 +130,8 @@ async function handleTokenFollowup(interaction: APIApplicationCommandInteraction
     }
 }
 
-// Handle /notify. Fast single DB write, so we respond synchronously.
-async function handleNotify(interaction: APIApplicationCommandInteraction) {
+// Handle /notify after acknowledging the interaction.
+async function handleNotify(interaction: APIApplicationCommandInteraction): Promise<string> {
     const commandData = interaction.data as APIChatInputApplicationCommandInteractionData;
 
     // Authorize by immutable Discord user ID (usernames are mutable and not unique).
@@ -133,50 +140,24 @@ async function handleNotify(interaction: APIApplicationCommandInteraction) {
 
     if (!userId || !authorizedUsers.includes(userId)) {
         // Do not disclose the authorized-user list to unauthorized callers.
-        return {
-            type: InteractionResponseType.ChannelMessageWithSource,
-            data: { content: 'You are not authorized to use this command.', flags: EPHEMERAL }
-        };
+        return 'You are not authorized to use this command.';
     }
 
     const options = commandData.options || [];
-    const sellThresholdOption = options.find(o => o.name === 'sell_threshold') as CommandNumberOption | undefined;
-    const holdThresholdOption = options.find(o => o.name === 'hold_threshold') as CommandNumberOption | undefined;
     const channelOption = options.find(o => o.name === 'channel') as CommandStringOption | undefined;
 
-    if (!sellThresholdOption || !holdThresholdOption || !channelOption) {
-        return {
-            type: InteractionResponseType.ChannelMessageWithSource,
-            data: { content: 'Missing required options.', flags: EPHEMERAL }
-        };
+    if (!channelOption) {
+        return 'Missing required options.';
     }
 
-    const sellThreshold = sellThresholdOption.value;
-    const holdThreshold = holdThresholdOption.value;
     const channel = channelOption.value;
 
-    if (sellThreshold <= holdThreshold) {
-        return {
-            type: InteractionResponseType.ChannelMessageWithSource,
-            data: { content: 'Sell threshold must be higher than hold threshold.', flags: EPHEMERAL }
-        };
-    }
-
     try {
-        await saveNotificationSettings({ channelId: channel, sellThreshold, holdThreshold });
-        return {
-            type: InteractionResponseType.ChannelMessageWithSource,
-            data: {
-                content: `Notifications set up successfully!\nSell threshold: ${sellThreshold.toLocaleString()} gold\nHold threshold: ${holdThreshold.toLocaleString()} gold\nNotifications will be sent to <#${channel}>`,
-                flags: EPHEMERAL
-            }
-        };
+        await saveNotificationSettings({ channelId: channel });
+        return `Token price status set up successfully. Rolling four-week and 52-week ranges will be posted in <#${channel}>.`;
     } catch (error) {
         console.error('Error in notify command:', error instanceof Error ? error.message : error);
-        return {
-            type: InteractionResponseType.ChannelMessageWithSource,
-            data: { content: 'Sorry, I encountered an error while setting up notifications.', flags: EPHEMERAL }
-        };
+        return 'Sorry, I encountered an error while setting up notifications.';
     }
 }
 
@@ -379,8 +360,18 @@ export default async function handler(
             }
 
             if (commandData.name === 'notify') {
-                const response = await handleNotify(interaction);
-                res.status(200).json(response);
+                // ACK immediately, then edit the original response with the result.
+                res.status(200).json({
+                    type: InteractionResponseType.DeferredChannelMessageWithSource,
+                    data: { flags: EPHEMERAL }
+                });
+                waitUntil(
+                    handleNotify(interaction)
+                        .then(content => editOriginalResponse(interaction.application_id, interaction.token, content))
+                        .catch(error =>
+                            console.error('Notify follow-up failed:', error instanceof Error ? error.message : error)
+                        )
+                );
                 return;
             }
 
