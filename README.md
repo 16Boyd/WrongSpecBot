@@ -247,7 +247,7 @@ Here's the high-level path; each step links to the detailed section below.
 5. Configure project:
    - **Framework Preset**: Other
    - **Root Directory**: `./` (leave default)
-   - **Build Command**: `npm run build` (or leave empty)
+   - **Build Command**: Keep the repository's `vercel.json` setting, `node scripts/run-migrations.js`. If you override the build command in Vercel, use that command so production deployments apply the database migrations.
    - **Output Directory**: Leave empty
    - **Install Command**: `npm install`
 
@@ -263,6 +263,7 @@ BLIZZARD_CLIENT_ID=your_blizzard_client_id
 BLIZZARD_CLIENT_SECRET=your_blizzard_client_secret
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_ANON_KEY=your_supabase_anon_key
+POSTGRES_URL_NON_POOLING=your_supabase_direct_postgres_connection_string
 CRON_SECRET=a_long_random_shared_secret
 AUTHORIZED_USERS=comma_separated_discord_user_ids
 DEFAULT_CHANNEL_ID=optional_fallback_channel_id
